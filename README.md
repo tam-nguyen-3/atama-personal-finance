@@ -1,36 +1,57 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# Plaid Finance Dashboard MVP
 
-## Getting Started
+A minimal personal finance dashboard built with Next.js that uses Plaid's Sandbox API to connect bank accounts and view aggregated transactions.
 
-First, run the development server:
+## Setup
+
+### 1. Get Plaid Sandbox API Keys
+
+1. Sign up at [dashboard.plaid.com](https://dashboard.plaid.com)
+2. Navigate to **Team Settings > Keys**
+3. Copy your **Client ID** and **Sandbox Secret**
+
+### 2. Configure Environment
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.local.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Edit `.env.local` and paste your Plaid credentials:
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+```
+PLAID_CLIENT_ID=your_client_id_here
+PLAID_SECRET=your_sandbox_secret_here
+PLAID_ENV=sandbox
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 3. Install & Run
 
-## Learn More
+```bash
+npm install
+npm run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+Open [http://localhost:3000](http://localhost:3000).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Usage
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. Click **"Connect a Bank"** to open Plaid Link
+2. Use these Sandbox test credentials:
+   - Username: `user_good`
+   - Password: `pass_good`
+   - 2FA code: `1234`
+3. Select a test institution (e.g., First Platypus Bank, Tartan Bank)
+4. Once connected, accounts and transactions will appear on the dashboard
+5. Connect multiple banks to see aggregated data
 
-## Deploy on Vercel
+## Test Institutions
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+For variety when testing, try these Sandbox institutions:
+- **First Platypus Bank** (`ins_109508`)
+- **Tartan Bank** (`ins_109509`)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Important Notes
+
+- `data/items.json` stores Plaid access tokens locally and is gitignored — **never commit this file**
+- This is a Sandbox-only MVP with no authentication — not for production use
+- Transactions use Plaid's `/transactions/sync` endpoint with cursor-based pagination
