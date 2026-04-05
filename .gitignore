@@ -42,3 +42,10 @@ data/items.json
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Agents
+AGENTS.md
+CLAUDE.md
+
+# local env files
+.env.local
