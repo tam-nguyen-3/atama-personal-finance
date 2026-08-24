@@ -14,3 +14,18 @@ export function getPlaidErrorDetails(error: unknown): unknown {
 
   return response.data;
 }
+
+export function getApiErrorMessage(body: unknown, fallback: string): string {
+  if (!body || typeof body !== "object" || !("error" in body)) return fallback;
+  const error = body.error;
+  if (typeof error === "string") return error;
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+  return fallback;
+}

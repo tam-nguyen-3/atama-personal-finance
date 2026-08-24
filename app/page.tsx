@@ -35,17 +35,11 @@ import {
   getProgressColor,
   getTotalBalance,
   groupAccountsByInstitution,
-  mergeTransactions,
   sentenceCase,
   validateBudgetInput,
 } from "@/lib/dashboard";
-import { getErrorMessage } from "@/lib/errors";
-import type {
-  ApiErrorBody,
-  DashboardAccount,
-  DashboardError,
-  DashboardTransaction,
-} from "@/types/finance";
+import { getApiErrorMessage, getErrorMessage } from "@/lib/errors";
+import type { DashboardAccount, DashboardError, TransactionsPage } from "@/types/finance";
 
 type DashboardTab = "overview" | "cashflow" | "budget";
 
@@ -107,18 +101,37 @@ function Dashboard() {
     setLoading(true);
     setError(null);
     try {
+      const syncResponse = await fetch("/api/plaid/sync", { method: "POST" });
+      let syncWarning: string | null = null;
+      if (!syncResponse.ok) {
+        syncWarning = getApiErrorMessage(
+          await syncResponse.json().catch(() => null),
+          "Live refresh failed. Showing the latest saved data.",
+        );
+      } else {
+        const syncData: unknown = await syncResponse.json();
+        if (
+          syncData &&
+          typeof syncData === "object" &&
+          "failures" in syncData &&
+          Array.isArray(syncData.failures) &&
+          syncData.failures.length > 0
+        ) {
+          syncWarning =
+            "One or more banks could not refresh. Showing the latest saved data.";
+        }
+      }
       const [accountsRes, transactionsRes] = await Promise.all([
-        fetch("/api/plaid/accounts"),
-        fetch("/api/plaid/transactions"),
+        fetch("/api/accounts"),
+        fetch("/api/transactions?limit=500"),
       ]);
       if (!accountsRes.ok || !transactionsRes.ok) {
         const failedResponse = !accountsRes.ok ? accountsRes : transactionsRes;
-        const details = (await failedResponse
-          .json()
-          .catch(() => ({}))) as ApiErrorBody;
         throw new Error(
-          details.error ||
-            "We couldn’t reach Plaid. Your existing data is still available.",
+          getApiErrorMessage(
+            await failedResponse.json().catch(() => null),
+            "We couldn’t load your saved financial data.",
+          ),
         );
       }
       const [accountsData, transactionsData]: [unknown, unknown] = await Promise.all([
@@ -129,23 +142,19 @@ function Dashboard() {
       const normalizedAccounts = Array.isArray(accountsData)
         ? (accountsData as DashboardAccount[])
         : [];
-      const normalizedTransactions = Array.isArray(transactionsData)
-        ? (transactionsData as DashboardTransaction[])
-        : [];
+      const normalizedTransactions =
+        transactionsData &&
+        typeof transactionsData === "object" &&
+        "data" in transactionsData &&
+        Array.isArray(transactionsData.data)
+          ? (transactionsData as TransactionsPage).data
+          : [];
 
       setAccounts(normalizedAccounts);
-      setTransactions((prev) => {
-        if (normalizedAccounts.length === 0) return [];
-
-        const institutionNames = normalizedAccounts.map(
-          (account) => account.institution_name,
-        );
-        return mergeTransactions(
-          prev,
-          normalizedTransactions,
-          institutionNames,
-        );
-      });
+      setTransactions(normalizedTransactions);
+      if (syncWarning) {
+        setError({ message: syncWarning, retry: true });
+      }
     } catch (err) {
       setError({ message: getErrorMessage(err), retry: true });
     } finally {
@@ -161,16 +170,20 @@ function Dashboard() {
   const createLinkToken = useCallback(async () => {
     try {
       setLinkError(null);
-      const res = await fetch("/api/plaid/create-link-token", {
+      const res = await fetch("/api/plaid/link-token", {
         method: "POST",
       });
-      const data = (await res.json()) as ApiErrorBody & { link_token?: string };
-      if (!res.ok || !data.link_token) {
+      const data: unknown = await res.json();
+      const linkToken =
+        data && typeof data === "object" && "link_token" in data
+          ? data.link_token
+          : undefined;
+      if (!res.ok || typeof linkToken !== "string") {
         throw new Error(
-          data.error || "Bank connections are temporarily unavailable.",
+          getApiErrorMessage(data, "Bank connections are temporarily unavailable."),
         );
       }
-      setLinkToken(data.link_token);
+      setLinkToken(linkToken);
     } catch (err) {
       setLinkError(getErrorMessage(err));
     }
@@ -192,12 +205,15 @@ function Dashboard() {
           body: JSON.stringify({
             public_token: publicToken,
             institution_name: metadata.institution?.name || "Unknown Bank",
+            institution_id: metadata.institution?.institution_id ?? null,
           }),
         });
         if (!res.ok) {
-          const details = (await res.json().catch(() => ({}))) as ApiErrorBody;
           throw new Error(
-            details.error || "The bank connection could not be completed.",
+            getApiErrorMessage(
+              await res.json().catch(() => null),
+              "The bank connection could not be completed.",
+            ),
           );
         }
         await fetchData();
@@ -227,12 +243,16 @@ function Dashboard() {
   const handleDisconnect = async (itemId: string) => {
     try {
       setError(null);
-      const res = await fetch(`/api/plaid/item?item_id=${itemId}`, {
+      const res = await fetch(`/api/plaid/items/${encodeURIComponent(itemId)}`, {
         method: "DELETE",
       });
       if (!res.ok) {
-        const details = (await res.json().catch(() => ({}))) as ApiErrorBody;
-        throw new Error(details.error || "The bank could not be disconnected.");
+        throw new Error(
+          getApiErrorMessage(
+            await res.json().catch(() => null),
+            "The bank could not be disconnected.",
+          ),
+        );
       }
       await fetchData();
     } catch (err) {
@@ -266,17 +286,21 @@ function Dashboard() {
     [budgets, transactions],
   );
 
-  const handleCreateBudget = () => {
+  const handleCreateBudget = async () => {
     const validationError = validateBudgetInput(budgetName, budgetLimit);
     if (validationError) {
       setBudgetFormError(validationError);
       return;
     }
-    createBudget(budgetName.trim(), Number(budgetLimit));
-    setBudgetName("");
-    setBudgetLimit("");
-    setBudgetFormError(null);
-    setShowBudgetForm(false);
+    try {
+      await createBudget(budgetName.trim(), Number(budgetLimit));
+      setBudgetName("");
+      setBudgetLimit("");
+      setBudgetFormError(null);
+      setShowBudgetForm(false);
+    } catch (createError) {
+      setBudgetFormError(getErrorMessage(createError));
+    }
   };
 
   const CHART_COLORS = [
@@ -321,7 +345,7 @@ function Dashboard() {
       {/* Loading */}
       {loading ? (
         <DashboardLoading />
-      ) : accounts.length === 0 ? (
+      ) : accounts.length === 0 && transactions.length === 0 ? (
         <EmptyAccounts
           onConnect={() => {
             setConnecting(true);
@@ -885,7 +909,14 @@ function Dashboard() {
                                   if (
                                     confirm(`Delete "${budget.name}" budget?`)
                                   ) {
-                                    deleteBudget(budget.id);
+                                    void deleteBudget(budget.id).catch(
+                                      (deleteError: unknown) => {
+                                        setError({
+                                          message: getErrorMessage(deleteError),
+                                          retry: false,
+                                        });
+                                      },
+                                    );
                                   }
                                 }}
                                 className="text-[11px] font-500 transition-colors ml-2"

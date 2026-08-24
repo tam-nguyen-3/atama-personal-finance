@@ -67,6 +67,7 @@ export type DashboardError = {
   retry: boolean;
 };
 
-export type ApiErrorBody = {
-  error?: string;
+export type TransactionsPage = {
+  data: DashboardTransaction[];
+  nextCursor: string | null;
 };

@@ -1,71 +1,106 @@
 # atama
 
-A calm personal finance dashboard that brings connected bank accounts, transactions, cash flow, and budgets into one view. Atama uses Plaid Sandbox for financial data and keeps the experience intentionally focused on understanding where money is going.
+A calm, local-first personal finance dashboard that brings connected bank accounts, transaction history, cash flow, and budgets into one view. Atama uses Plaid Sandbox for financial data and PostgreSQL for durable storage.
 
 ![Placeholder for the atama dashboard overview](public/readme/dashboard-placeholder.svg)
 
-> Replace the placeholder above with a Plaid Sandbox screenshot when preparing the portfolio. A 1440 × 900 overview capture works well and contains no real financial information.
+> Replace the placeholder with a Plaid Sandbox screenshot when preparing the portfolio. A 1440 × 900 overview capture works well and contains no real financial information.
 
 ## Features
 
 - Connect and disconnect multiple Plaid Sandbox institutions
-- Aggregate balances across checking, savings, credit, and investment accounts
-- Synchronize and search transactions across institutions
-- Explore category-based spending and monthly cash flow charts
+- Persist accounts and complete transaction history in PostgreSQL
+- Correctly apply Plaid transaction additions, modifications, and removals
+- Retain transaction and budget history after an institution is disconnected
+- Search transactions and explore category spending and monthly cash flow
 - Create budgets and assign individual transactions to them
-- Retain budgets and the latest transaction view in local browser storage
-- Recover gracefully from unavailable credentials, Plaid errors, and empty data states
+- Encrypt Plaid access tokens at rest with AES-256-GCM
+- Accept verified, idempotent Plaid transaction webhooks when a public URL is configured
+- Recover gracefully from unavailable credentials, sync errors, and empty data states
 
-## How it works
+## Architecture
 
 ```mermaid
 flowchart LR
-  Browser[Next.js client dashboard] --> Routes[Next.js route handlers]
-  Routes --> Plaid[Plaid Sandbox API]
-  Routes --> Items[data/items.json]
-  Browser --> Local[Browser localStorage]
-
-  Items -. access tokens and sync cursors .-> Routes
-  Local -. budgets and transaction cache .-> Browser
+  Browser[Next.js client dashboard] --> REST[Typed REST route handlers]
+  REST --> DAL[Server-only data access and validation]
+  DAL --> Postgres[(PostgreSQL 17)]
+  REST --> Sync[Plaid sync service]
+  Sync --> Plaid[Plaid Sandbox API]
+  Sync --> Postgres
+  Plaid -. signed webhook .-> Webhook[JWT verification and idempotency]
+  Webhook --> Sync
 ```
 
-Plaid credentials and access tokens remain server-side. Route handlers exchange Link tokens, fetch accounts, synchronize transactions, and remove connected Items. The browser owns interactive dashboard state and local-only budget persistence.
+The browser never receives Plaid access tokens or queries the database directly. Route handlers validate external input with Zod and return small DTOs. Access tokens use versioned AES-256-GCM ciphertext (`v1.iv.tag.ciphertext`), while transaction updates and the final sync cursor are committed together after every pagination run.
+
+```mermaid
+erDiagram
+  USERS ||--o{ PLAID_ITEMS : owns
+  USERS ||--o{ ACCOUNTS : owns
+  USERS ||--o{ TRANSACTIONS : owns
+  USERS ||--o{ BUDGETS : owns
+  PLAID_ITEMS ||--o{ ACCOUNTS : contains
+  PLAID_ITEMS ||--o{ TRANSACTIONS : synchronizes
+  PLAID_ITEMS ||--o{ SYNC_RUNS : audits
+  BUDGETS ||--o{ BUDGET_TRANSACTIONS : groups
+  TRANSACTIONS ||--o| BUDGET_TRANSACTIONS : assigned_to
+```
+
+The initial migration seeds one local user. Ownership columns intentionally remain in the schema so authentication can be added without redesigning financial records.
 
 ## Tech stack
 
-- Next.js 16 App Router and React 19
+- Next.js 16 App Router, React 19, and strict TypeScript
+- PostgreSQL 17, Drizzle ORM, and Drizzle Kit migrations
 - Plaid Node SDK and React Plaid Link
-- Recharts for spending and cash-flow visualization
-- Tailwind CSS 4
+- Zod request validation and JOSE webhook verification
+- Recharts and Tailwind CSS 4
 - Vitest, jsdom, and React Testing Library
+- Docker Compose for the local database
 
 ## Local setup
 
 ### Prerequisites
 
-- Node.js 22 (the repository includes a `mise.toml` tool definition)
-- pnpm
+- Docker Desktop or another Docker Compose-compatible runtime
+- [mise](https://mise.jdx.dev/) (the repository pins Node.js 22)
 - Plaid Sandbox client ID and secret
 
 ### Install and configure
 
+Install the pinned Node.js version and project dependencies:
+
 ```bash
-pnpm install
-cp .env.example .env.local
+mise install
+mise exec -- pnpm install
 ```
 
-Add the Sandbox credentials from the [Plaid dashboard](https://dashboard.plaid.com/team/keys) to `.env.local`:
+Copy the environment template. If you already have a local `.env`, add only the new database and encryption variables instead of overwriting it.
+
+```bash
+cp .env.example .env
+openssl rand -base64 32
+```
+
+Set the generated encryption key and your Sandbox credentials:
 
 ```dotenv
+DATABASE_URL=postgresql://atama:atama@localhost:5432/atama
+PLAID_TOKEN_ENCRYPTION_KEY=your_generated_32_byte_base64_key
 PLAID_CLIENT_ID=your_client_id
 PLAID_SECRET=your_sandbox_secret
 PLAID_ENV=sandbox
 ```
 
-Start the application:
+Do not rotate `PLAID_TOKEN_ENCRYPTION_KEY` after connecting an Item unless its stored token is re-encrypted; old ciphertext cannot be decrypted with a different key.
+
+Start PostgreSQL, apply the checked-in migration, and run the app:
 
 ```bash
-pnpm dev
+mise exec -- pnpm db:up
+mise exec -- pnpm db:migrate
+mise exec -- pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000), select **Connect a Bank**, and use Plaid’s Sandbox credentials:
@@ -76,26 +111,59 @@ Open [http://localhost:3000](http://localhost:3000), select **Connect a Bank**, 
 
 First Platypus Bank (`ins_109508`) and Tartan Bank (`ins_109509`) are useful test institutions.
 
+This backend intentionally starts with a clean database. It does not import the old ignored `data/items.json` file or browser `localStorage` values.
+
+## Optional webhook setup
+
+The app works through manual synchronization without a webhook. To test webhooks, expose the local server through a tunnel, set `PLAID_WEBHOOK_URL` to its HTTPS `/api/plaid/webhook` URL before creating a Link token, and reconnect the Sandbox Item.
+
+Incoming requests are accepted only when the `Plaid-Verification` ES256 JWT is valid, no more than five minutes old, and contains the exact SHA-256 hash of the raw request body. Duplicate bodies are stored once.
+
+## REST API
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/accounts` | List active connected accounts |
+| `GET` | `/api/transactions?limit=100&cursor=...&query=...` | Page through saved transactions |
+| `GET`, `POST` | `/api/budgets` | List or create budgets |
+| `GET`, `PATCH`, `DELETE` | `/api/budgets/:id` | Read, edit, or delete a budget |
+| `POST` | `/api/budgets/:id/transactions` | Assign a transaction |
+| `DELETE` | `/api/budgets/:id/transactions/:transactionId` | Remove an assignment |
+| `POST` | `/api/plaid/link-token` | Create a Plaid Link token |
+| `POST` | `/api/plaid/exchange-token` | Store an encrypted Item and run its first sync |
+| `POST` | `/api/plaid/sync` | Synchronize all connected Items |
+| `DELETE` | `/api/plaid/items/:id` | Disconnect an Item while retaining history |
+| `POST` | `/api/plaid/webhook` | Verify and process Plaid webhooks |
+
+Errors use a consistent shape:
+
+```json
+{
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "The request is invalid."
+  }
+}
+```
+
 ## Quality checks
 
 ```bash
-pnpm lint
-pnpm test
-pnpm build
+mise exec -- pnpm typecheck
+mise exec -- pnpm lint
+mise exec -- pnpm test
+mise exec -- pnpm build
 ```
 
-The focused test suite covers transaction merging and search, category and cash-flow calculations, budget totals and validation, plus the primary empty and error states.
+The focused tests cover transaction and budget calculations, UI states, opaque pagination cursors, AES-GCM encryption and tamper detection, and Plaid sync pagination recovery.
 
 ## Current limitations
 
-This repository is a local, Sandbox-only portfolio MVP. It does not yet include authentication or a production database. Plaid access tokens and sync cursors are stored in the ignored `data/items.json` file, while budgets and cached transactions use browser `localStorage`. Do not use the current storage model with real financial data.
-
-The transaction sync endpoint currently returns newly added transactions and relies on the browser cache for previously synchronized history. A production implementation should persist transactions and process Plaid’s added, modified, and removed sync results.
+Atama is a single-user, local, Sandbox-only portfolio application. Its REST endpoints do not yet require authentication, so do not expose the app publicly or use it with real financial data. A future authentication layer can use the existing ownership columns to isolate records per user.
 
 ## Roadmap
 
-- Add user authentication and PostgreSQL persistence
-- Encrypt Plaid access tokens at rest
-- Persist full transaction history and handle Plaid webhooks
+- Add authentication and per-user authorization
 - Add monthly budget periods and category-based allocation
 - Detect recurring expenses and summarize month-over-month changes
+- Add background job processing for webhook-triggered syncs

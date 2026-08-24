@@ -6,12 +6,11 @@ import { useBudgets } from "../../components/BudgetContext";
 import { useTransactions } from "../../components/TransactionContext";
 import {
   getProgressColor,
-  mergeTransactions,
   sentenceCase,
 } from "@/lib/dashboard";
 import { ErrorBanner } from "../../components/dashboard/DashboardStates";
-import { getErrorMessage } from "@/lib/errors";
-import type { ApiErrorBody, DashboardTransaction } from "@/types/finance";
+import { getApiErrorMessage, getErrorMessage } from "@/lib/errors";
+import type { TransactionsPage } from "@/types/finance";
 
 export default function BudgetDetailPage({
   params,
@@ -47,18 +46,21 @@ export default function BudgetDetailPage({
     if (transactions.length === 0) setLoadingTxns(true);
     setTransactionError(null);
     try {
-      const res = await fetch("/api/plaid/transactions");
+      const res = await fetch("/api/transactions?limit=500");
       if (!res.ok) {
-        const details = (await res.json().catch(() => ({}))) as ApiErrorBody;
         throw new Error(
-          details.error || "We couldn’t refresh the available transactions.",
+          getApiErrorMessage(
+            await res.json().catch(() => null),
+            "We couldn’t refresh the available transactions.",
+          ),
         );
       }
       const data: unknown = await res.json();
-      const incoming = Array.isArray(data)
-        ? (data as DashboardTransaction[])
-        : [];
-      setTransactions((prev) => mergeTransactions(prev, incoming));
+      const incoming =
+        data && typeof data === "object" && "data" in data && Array.isArray(data.data)
+          ? (data as TransactionsPage).data
+          : [];
+      setTransactions(incoming);
     } catch (error) {
       setTransactionError(getErrorMessage(error));
     } finally {
@@ -118,16 +120,39 @@ export default function BudgetDetailPage({
     setEditing(true);
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editName.trim() || !editLimit || Number(editLimit) <= 0) return;
-    updateBudget(id, { name: editName.trim(), limit: Number(editLimit) });
-    setEditing(false);
+    try {
+      await updateBudget(id, {
+        name: editName.trim(),
+        limit: Number(editLimit),
+      });
+      setEditing(false);
+    } catch (error) {
+      setTransactionError(getErrorMessage(error));
+    }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (budget && confirm(`Delete "${budget.name}" budget?`)) {
-      deleteBudget(id);
-      router.push("/?tab=budget");
+      try {
+        await deleteBudget(id);
+        router.push("/?tab=budget");
+      } catch (error) {
+        setTransactionError(getErrorMessage(error));
+      }
+    }
+  };
+
+  const handleAssignment = async (
+    action: (budgetId: string, transactionId: string) => Promise<void>,
+    transactionId: string,
+  ) => {
+    try {
+      setTransactionError(null);
+      await action(id, transactionId);
+    } catch (error) {
+      setTransactionError(getErrorMessage(error));
     }
   };
 
@@ -500,9 +525,12 @@ export default function BudgetDetailPage({
                     </td>
                     <td className="px-4 py-3 text-center">
                       <button
-                        onClick={() =>
-                          removeTransactionFromBudget(id, txn.transaction_id)
-                        }
+                        onClick={() => {
+                          void handleAssignment(
+                            removeTransactionFromBudget,
+                            txn.transaction_id,
+                          );
+                        }}
                         className="text-[13px] transition-colors"
                         style={{ color: "var(--color-text-muted)" }}
                         onMouseEnter={(e) =>
@@ -687,9 +715,12 @@ export default function BudgetDetailPage({
                         </td>
                         <td className="px-4 py-2.5 text-center">
                           <button
-                            onClick={() =>
-                              addTransactionToBudget(id, txn.transaction_id)
-                            }
+                            onClick={() => {
+                              void handleAssignment(
+                                addTransactionToBudget,
+                                txn.transaction_id,
+                              );
+                            }}
                             className="text-[11px] font-600 px-2.5 py-1 rounded-full text-white transition-colors"
                             style={{ backgroundColor: "var(--color-accent)" }}
                             onMouseEnter={(e) =>

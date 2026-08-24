@@ -1,0 +1,19 @@
+services:
+  database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: atama
+      POSTGRES_USER: atama
+      POSTGRES_PASSWORD: atama
+    ports:
+      - "5432:5432"
+    volumes:
+      - atama-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atama -d atama"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  atama-postgres:
