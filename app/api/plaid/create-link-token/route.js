@@ -1,7 +1,14 @@
-import { plaidClient } from "@/lib/plaid";
+import { isPlaidConfigured, plaidClient } from "@/lib/plaid";
 import { CountryCode, Products } from "plaid";
 
 export async function POST() {
+  if (!isPlaidConfigured) {
+    return Response.json(
+      { error: "Plaid Sandbox credentials are not configured." },
+      { status: 503 },
+    );
+  }
+
   try {
     const response = await plaidClient.linkTokenCreate({
       user: { client_user_id: "dev-user-001" },

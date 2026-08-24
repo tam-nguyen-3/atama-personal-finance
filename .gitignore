@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/.pnpm-store
 /.pnp
 .pnp.*
 .yarn/*
@@ -32,8 +33,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
-# Plaid access tokens - never commit
+# Plaid access tokens — never commit
 data/items.json
 
 # vercel
@@ -46,6 +48,3 @@ next-env.d.ts
 # Agents
 AGENTS.md
 CLAUDE.md
-
-# local env files
-.env.local

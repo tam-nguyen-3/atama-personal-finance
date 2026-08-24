@@ -4,40 +4,12 @@ import { use, useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useBudgets } from "../../components/BudgetContext";
 import { useTransactions } from "../../components/TransactionContext";
-
-function sentenceCase(str) {
-  if (!str) return "";
-  const s = str.replace(/_/g, " ").toLowerCase();
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-function getProgressColor(pct) {
-  if (pct < 60) return "var(--color-positive)";
-  if (pct < 85) return "#f59e0b";
-  return "var(--color-negative)";
-}
-
-function mergeTransactions(existing, incoming) {
-  const map = new Map();
-
-  for (const txn of existing) {
-    const key =
-      txn.transaction_id ||
-      `${txn.account_id}-${txn.date}-${txn.amount}-${txn.name}`;
-    map.set(key, txn);
-  }
-
-  for (const txn of incoming) {
-    const key =
-      txn.transaction_id ||
-      `${txn.account_id}-${txn.date}-${txn.amount}-${txn.name}`;
-    map.set(key, txn);
-  }
-
-  return Array.from(map.values()).sort(
-    (a, b) => new Date(b.date) - new Date(a.date),
-  );
-}
+import {
+  getProgressColor,
+  mergeTransactions,
+  sentenceCase,
+} from "@/lib/dashboard";
+import { ErrorBanner } from "../../components/dashboard/DashboardStates";
 
 export default function BudgetDetailPage({ params }) {
   const { id } = use(params);
@@ -55,6 +27,7 @@ export default function BudgetDetailPage({ params }) {
   const [loadingTxns, setLoadingTxns] = useState(
     () => transactions.length === 0,
   );
+  const [transactionError, setTransactionError] = useState(null);
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [addSearch, setAddSearch] = useState("");
   const [editing, setEditing] = useState(false);
@@ -66,21 +39,28 @@ export default function BudgetDetailPage({ params }) {
   // Fetch transactions from API
   const fetchTransactions = useCallback(async () => {
     if (transactions.length === 0) setLoadingTxns(true);
+    setTransactionError(null);
     try {
       const res = await fetch("/api/plaid/transactions");
-      if (!res.ok) throw new Error("Failed to fetch");
+      if (!res.ok) {
+        const details = await res.json().catch(() => ({}));
+        throw new Error(
+          details.error || "We couldn’t refresh the available transactions.",
+        );
+      }
       const data = await res.json();
       const incoming = Array.isArray(data) ? data : [];
       setTransactions((prev) => mergeTransactions(prev, incoming));
-    } catch {
-      // Keep existing cached transactions when refresh fails.
+    } catch (error) {
+      setTransactionError(error.message);
     } finally {
       setLoadingTxns(false);
     }
   }, [setTransactions, transactions.length]);
 
   useEffect(() => {
-    fetchTransactions();
+    const initialFetch = window.setTimeout(fetchTransactions, 0);
+    return () => window.clearTimeout(initialFetch);
   }, [fetchTransactions]);
 
   // All transaction IDs assigned to any budget
@@ -189,6 +169,13 @@ export default function BudgetDetailPage({ params }) {
 
   return (
     <main className="max-w-[800px] mx-auto px-6 py-8">
+      {transactionError && (
+        <ErrorBanner
+          message={transactionError}
+          onAction={fetchTransactions}
+          onDismiss={() => setTransactionError(null)}
+        />
+      )}
       {/* Back Button */}
       <button
         onClick={() => router.push("/?tab=budget")}

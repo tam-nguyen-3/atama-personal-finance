@@ -16,48 +16,26 @@ import {
 } from "recharts";
 import { useBudgets } from "./components/BudgetContext";
 import { useTransactions } from "./components/TransactionContext";
-
-function sentenceCase(str) {
-  if (!str) return "";
-  const s = str.replace(/_/g, " ").toLowerCase();
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-const MONTH_LABELS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
-
-function mergeTransactions(existing, incoming, institutionNames) {
-  const allowed = new Set(institutionNames);
-  const map = new Map();
-
-  for (const txn of existing) {
-    if (allowed.has(txn.institution_name)) {
-      map.set(txn.transaction_id, txn);
-    }
-  }
-
-  for (const txn of incoming) {
-    if (allowed.has(txn.institution_name)) {
-      map.set(txn.transaction_id, txn);
-    }
-  }
-
-  return Array.from(map.values()).sort(
-    (a, b) => new Date(b.date) - new Date(a.date),
-  );
-}
+import {
+  EmptyAccounts,
+  EmptyTransactions,
+  DashboardHeader,
+  DashboardLoading,
+  ErrorBanner,
+} from "./components/dashboard/DashboardStates";
+import {
+  filterTransactions,
+  getBudgetSpent,
+  getCashFlowData,
+  getCashFlowTotals,
+  getCategoryBreakdown,
+  getProgressColor,
+  getTotalBalance,
+  groupAccountsByInstitution,
+  mergeTransactions,
+  sentenceCase,
+  validateBudgetInput,
+} from "@/lib/dashboard";
 
 export default function DashboardPage() {
   return (
@@ -76,33 +54,26 @@ function Dashboard() {
   const { transactions, setTransactions } = useTransactions();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [connecting, setConnecting] = useState(false);
+  const [linkError, setLinkError] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
 
   // Tab state — initialized from URL ?tab= param
   const initialTab = searchParams.get("tab") || "overview";
-  const [activeTab, setActiveTab] = useState(
-    ["overview", "cashflow", "budget"].includes(initialTab)
-      ? initialTab
-      : "overview",
-  );
+  const activeTab = ["overview", "cashflow", "budget"].includes(initialTab)
+    ? initialTab
+    : "overview";
 
   // Budget state
   const { budgets, createBudget, deleteBudget } = useBudgets();
   const [showBudgetForm, setShowBudgetForm] = useState(false);
   const [budgetName, setBudgetName] = useState("");
   const [budgetLimit, setBudgetLimit] = useState("");
+  const [budgetFormError, setBudgetFormError] = useState(null);
 
   const handleTabChange = (tab) => {
-    setActiveTab(tab);
     router.replace(`/?tab=${tab}`, { scroll: false });
   };
-
-  useEffect(() => {
-    const tabFromUrl = searchParams.get("tab") || "overview";
-    if (["overview", "cashflow", "budget"].includes(tabFromUrl)) {
-      setActiveTab((prev) => (prev === tabFromUrl ? prev : tabFromUrl));
-    }
-  }, [searchParams]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -113,7 +84,12 @@ function Dashboard() {
         fetch("/api/plaid/transactions"),
       ]);
       if (!accountsRes.ok || !transactionsRes.ok) {
-        throw new Error("Failed to fetch data");
+        const failedResponse = !accountsRes.ok ? accountsRes : transactionsRes;
+        const details = await failedResponse.json().catch(() => ({}));
+        throw new Error(
+          details.error ||
+            "We couldn’t reach Plaid. Your existing data is still available.",
+        );
       }
       const [accountsData, transactionsData] = await Promise.all([
         accountsRes.json(),
@@ -141,34 +117,44 @@ function Dashboard() {
         );
       });
     } catch (err) {
-      setError(err.message);
+      setError({ message: err.message, retry: true });
     } finally {
       setLoading(false);
     }
   }, [setTransactions]);
 
   useEffect(() => {
-    fetchData();
+    const initialFetch = window.setTimeout(fetchData, 0);
+    return () => window.clearTimeout(initialFetch);
   }, [fetchData]);
 
-  useEffect(() => {
-    async function createLinkToken() {
-      try {
-        const res = await fetch("/api/plaid/create-link-token", {
-          method: "POST",
-        });
-        const data = await res.json();
-        if (data.link_token) setLinkToken(data.link_token);
-      } catch (err) {
-        console.error("Error creating link token:", err);
+  const createLinkToken = useCallback(async () => {
+    try {
+      setLinkError(null);
+      const res = await fetch("/api/plaid/create-link-token", {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok || !data.link_token) {
+        throw new Error(
+          data.error || "Bank connections are temporarily unavailable.",
+        );
       }
+      setLinkToken(data.link_token);
+    } catch (err) {
+      setLinkError(err.message);
     }
-    createLinkToken();
   }, []);
+
+  useEffect(() => {
+    const initialLinkToken = window.setTimeout(createLinkToken, 0);
+    return () => window.clearTimeout(initialLinkToken);
+  }, [createLinkToken]);
 
   const onPlaidSuccess = useCallback(
     async (publicToken, metadata) => {
       try {
+        setConnecting(true);
         setError(null);
         const res = await fetch("/api/plaid/exchange-token", {
           method: "POST",
@@ -178,10 +164,17 @@ function Dashboard() {
             institution_name: metadata.institution?.name || "Unknown Bank",
           }),
         });
-        if (!res.ok) throw new Error("Failed to exchange token");
+        if (!res.ok) {
+          const details = await res.json().catch(() => ({}));
+          throw new Error(
+            details.error || "The bank connection could not be completed.",
+          );
+        }
         await fetchData();
       } catch (err) {
-        setError(err.message);
+        setError({ message: err.message, retry: false });
+      } finally {
+        setConnecting(false);
       }
     },
     [fetchData],
@@ -190,6 +183,15 @@ function Dashboard() {
   const { open, ready } = usePlaidLink({
     token: linkToken,
     onSuccess: onPlaidSuccess,
+    onExit: (exitError) => {
+      setConnecting(false);
+      if (exitError) {
+        setError({
+          message: "The bank connection was interrupted. You can try again.",
+          retry: false,
+        });
+      }
+    },
   });
 
   const handleDisconnect = async (itemId) => {
@@ -198,128 +200,54 @@ function Dashboard() {
       const res = await fetch(`/api/plaid/item?item_id=${itemId}`, {
         method: "DELETE",
       });
-      if (!res.ok) throw new Error("Failed to disconnect");
+      if (!res.ok) {
+        const details = await res.json().catch(() => ({}));
+        throw new Error(details.error || "The bank could not be disconnected.");
+      }
       await fetchData();
     } catch (err) {
-      setError(err.message);
+      setError({ message: err.message, retry: true });
     }
   };
 
-  const accountsByInstitution = useMemo(() => {
-    const grouped = {};
-    for (const account of accounts) {
-      const key = account.institution_name;
-      if (!grouped[key])
-        grouped[key] = { accounts: [], item_id: account.item_id };
-      grouped[key].accounts.push(account);
-    }
-    return grouped;
-  }, [accounts]);
-
-  const totalBalance = useMemo(() => {
-    return accounts.reduce(
-      (sum, acct) => sum + (acct.balances?.current || 0),
-      0,
-    );
-  }, [accounts]);
-
-  const filteredTransactions = useMemo(() => {
-    if (!searchQuery) return transactions;
-    const q = searchQuery.toLowerCase();
-    return transactions.filter(
-      (txn) =>
-        txn.merchant_name?.toLowerCase().includes(q) ||
-        txn.name?.toLowerCase().includes(q),
-    );
-  }, [transactions, searchQuery]);
-
-  const categoryBreakdown = useMemo(() => {
-    const totals = {};
-    for (const txn of transactions) {
-      if (txn.amount <= 0) continue;
-      const category =
-        txn.personal_finance_category?.primary || "UNCATEGORIZED";
-      totals[category] = (totals[category] || 0) + txn.amount;
-    }
-    return Object.entries(totals)
-      .map(([category, total]) => ({
-        category: sentenceCase(category),
-        total: Math.round(total * 100) / 100,
-      }))
-      .sort((a, b) => b.total - a.total);
-  }, [transactions]);
-
-  // Cash Flow data
-  const cashFlowData = useMemo(() => {
-    const months = {};
-    for (const txn of transactions) {
-      const monthKey = txn.date?.slice(0, 7); // YYYY-MM
-      if (!monthKey) continue;
-      if (!months[monthKey]) months[monthKey] = { income: 0, expenses: 0 };
-      if (txn.amount < 0) {
-        months[monthKey].income += Math.abs(txn.amount);
-      } else {
-        months[monthKey].expenses += txn.amount;
-      }
-    }
-    return Object.entries(months)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([month, data]) => {
-        const [, m] = month.split("-");
-        return {
-          month,
-          monthLabel: MONTH_LABELS[parseInt(m, 10) - 1],
-          income: Math.round(data.income * 100) / 100,
-          expenses: Math.round(data.expenses * 100) / 100,
-          net: Math.round((data.income - data.expenses) * 100) / 100,
-        };
-      });
-  }, [transactions]);
-
-  const cashFlowTotals = useMemo(() => {
-    const totals = cashFlowData.reduce(
-      (acc, m) => ({
-        income: acc.income + m.income,
-        expenses: acc.expenses + m.expenses,
-      }),
-      { income: 0, expenses: 0 },
-    );
-    return {
-      income: Math.round(totals.income * 100) / 100,
-      expenses: Math.round(totals.expenses * 100) / 100,
-      net: Math.round((totals.income - totals.expenses) * 100) / 100,
-    };
-  }, [cashFlowData]);
-
-  // Budget spent computation
-  const budgetSpent = useMemo(() => {
-    const txnMap = {};
-    for (const txn of transactions) {
-      if (txn.amount > 0) txnMap[txn.transaction_id] = txn.amount;
-    }
-    const result = {};
-    for (const b of budgets) {
-      result[b.id] = b.transactionIds.reduce(
-        (sum, tid) => sum + (txnMap[tid] || 0),
-        0,
-      );
-    }
-    return result;
-  }, [transactions, budgets]);
+  const accountsByInstitution = useMemo(
+    () => groupAccountsByInstitution(accounts),
+    [accounts],
+  );
+  const totalBalance = useMemo(() => getTotalBalance(accounts), [accounts]);
+  const filteredTransactions = useMemo(
+    () => filterTransactions(transactions, searchQuery),
+    [transactions, searchQuery],
+  );
+  const categoryBreakdown = useMemo(
+    () => getCategoryBreakdown(transactions),
+    [transactions],
+  );
+  const cashFlowData = useMemo(
+    () => getCashFlowData(transactions),
+    [transactions],
+  );
+  const cashFlowTotals = useMemo(
+    () => getCashFlowTotals(cashFlowData),
+    [cashFlowData],
+  );
+  const budgetSpent = useMemo(
+    () => getBudgetSpent(budgets, transactions),
+    [budgets, transactions],
+  );
 
   const handleCreateBudget = () => {
-    if (!budgetName.trim() || !budgetLimit || Number(budgetLimit) <= 0) return;
+    const validationError = validateBudgetInput(budgetName, budgetLimit);
+    if (validationError) {
+      setBudgetFormError(validationError);
+      return;
+    }
     createBudget(budgetName.trim(), Number(budgetLimit));
     setBudgetName("");
     setBudgetLimit("");
+    setBudgetFormError(null);
     setShowBudgetForm(false);
   };
-
-  function getProgressColor(pct) {
-    if (pct < 60) return "var(--color-positive)";
-    if (pct < 85) return "#f59e0b";
-    return "var(--color-negative)";
-  }
 
   const CHART_COLORS = [
     "#1a6b54",
@@ -342,119 +270,42 @@ function Dashboard() {
 
   return (
     <main className="max-w-[1200px] mx-auto px-6 py-8">
-      {/* Header */}
-      <header className="flex items-center justify-between mb-10 animate-in">
-        <div>
-          <h1
-            className="text-[22px] font-700 tracking-tight"
-            style={{ color: "var(--color-text)" }}
-          >
-            atama
-            <span
-              className="inline-block w-[6px] h-[6px] rounded-full ml-[2px] mb-[2px]"
-              style={{ backgroundColor: "var(--color-accent)" }}
-            />
-          </h1>
-        </div>
-        <button
-          onClick={() => open()}
-          disabled={!ready}
-          className="text-[13px] font-600 px-5 py-2.5 rounded-full text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          style={{
-            backgroundColor: ready
-              ? "var(--color-accent)"
-              : "var(--color-text-muted)",
-          }}
-          onMouseEnter={(e) => {
-            if (ready)
-              e.currentTarget.style.backgroundColor =
-                "var(--color-accent-hover)";
-          }}
-          onMouseLeave={(e) => {
-            if (ready)
-              e.currentTarget.style.backgroundColor = "var(--color-accent)";
-          }}
-        >
-          + Connect a Bank
-        </button>
-      </header>
+      <DashboardHeader
+        onConnect={() => {
+          setConnecting(true);
+          open();
+        }}
+        canConnect={ready && !linkError}
+        connecting={connecting}
+      />
 
       {/* Error */}
-      {error && (
-        <div
-          className="flex items-center justify-between px-4 py-3 rounded-[10px] mb-6 text-[13px] animate-in"
-          style={{
-            backgroundColor: "var(--color-negative-bg)",
-            color: "var(--color-negative)",
-            border: "1px solid #fecaca",
+      {(error || linkError) && (
+        <ErrorBanner
+          message={error?.message || linkError}
+          actionLabel={
+            linkError ? "Retry connection" : error?.retry ? "Retry refresh" : undefined
+          }
+          onAction={linkError ? createLinkToken : error?.retry ? fetchData : undefined}
+          onDismiss={() => {
+            setError(null);
+            setLinkError(null);
           }}
-        >
-          <span>{error}</span>
-          <button
-            onClick={() => setError(null)}
-            className="ml-4 font-600 hover:opacity-70 transition-opacity"
-          >
-            Dismiss
-          </button>
-        </div>
+        />
       )}
 
       {/* Loading */}
       {loading ? (
-        <div className="animate-in">
-          <div className="skeleton h-[72px] w-full mb-6" />
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-            <div className="space-y-4">
-              <div className="skeleton h-[160px] w-full" />
-              <div className="skeleton h-[200px] w-full" />
-            </div>
-            <div className="lg:col-span-2">
-              <div className="skeleton h-[400px] w-full" />
-            </div>
-          </div>
-        </div>
+        <DashboardLoading />
       ) : accounts.length === 0 ? (
-        /* Empty State */
-        <div className="flex flex-col items-center justify-center py-28 animate-in">
-          <div
-            className="w-12 h-12 rounded-full flex items-center justify-center mb-5"
-            style={{ backgroundColor: "#f0fdf4", color: "var(--color-accent)" }}
-          >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
-              <line x1="1" y1="10" x2="23" y2="10" />
-            </svg>
-          </div>
-          <p
-            className="text-[16px] font-500 mb-1"
-            style={{ color: "var(--color-text)" }}
-          >
-            No accounts connected
-          </p>
-          <p
-            className="text-[13px] mb-6"
-            style={{ color: "var(--color-text-muted)" }}
-          >
-            Link your bank accounts to see balances and transactions.
-          </p>
-          <button
-            onClick={() => open()}
-            disabled={!ready}
-            className="text-[13px] font-600 px-5 py-2.5 rounded-full text-white transition-colors disabled:opacity-40"
-            style={{ backgroundColor: "var(--color-accent)" }}
-          >
-            + Connect a Bank
-          </button>
-        </div>
+        <EmptyAccounts
+          onConnect={() => {
+            setConnecting(true);
+            open();
+          }}
+          canConnect={ready && !linkError}
+          plaidUnavailable={Boolean(linkError)}
+        />
       ) : (
         <>
           {/* Net Worth */}
@@ -862,9 +713,14 @@ function Dashboard() {
                       <div className="space-y-2.5">
                         <input
                           type="text"
+                          aria-label="Budget name"
+                          aria-invalid={Boolean(budgetFormError)}
                           placeholder="Budget name (e.g., Groceries)"
                           value={budgetName}
-                          onChange={(e) => setBudgetName(e.target.value)}
+                          onChange={(e) => {
+                            setBudgetName(e.target.value);
+                            setBudgetFormError(null);
+                          }}
                           className="w-full text-[12px] px-3 py-2 rounded-lg outline-none transition-colors"
                           style={{
                             border: "1px solid var(--color-border)",
@@ -882,9 +738,14 @@ function Dashboard() {
                         />
                         <input
                           type="number"
+                          aria-label="Monthly limit"
+                          aria-invalid={Boolean(budgetFormError)}
                           placeholder="Monthly limit ($)"
                           value={budgetLimit}
-                          onChange={(e) => setBudgetLimit(e.target.value)}
+                          onChange={(e) => {
+                            setBudgetLimit(e.target.value);
+                            setBudgetFormError(null);
+                          }}
                           min="1"
                           className="w-full text-[12px] px-3 py-2 rounded-lg outline-none transition-colors"
                           style={{
@@ -901,6 +762,15 @@ function Dashboard() {
                               "var(--color-border)")
                           }
                         />
+                        {budgetFormError && (
+                          <p
+                            role="alert"
+                            className="text-[11px] font-500"
+                            style={{ color: "var(--color-negative)" }}
+                          >
+                            {budgetFormError}
+                          </p>
+                        )}
                         <div className="flex gap-2">
                           <button
                             onClick={handleCreateBudget}
@@ -914,6 +784,7 @@ function Dashboard() {
                               setShowBudgetForm(false);
                               setBudgetName("");
                               setBudgetLimit("");
+                              setBudgetFormError(null);
                             }}
                             className="text-[12px] font-500 px-4 py-2 rounded-lg transition-colors"
                             style={{ color: "var(--color-text-muted)" }}
@@ -1177,12 +1048,11 @@ function Dashboard() {
                   <tbody>
                     {filteredTransactions.length === 0 ? (
                       <tr>
-                        <td
-                          colSpan={5}
-                          className="px-4 py-12 text-center text-[13px]"
-                          style={{ color: "var(--color-text-muted)" }}
-                        >
-                          No transactions found.
+                        <td colSpan={5}>
+                          <EmptyTransactions
+                            hasSearch={Boolean(searchQuery.trim())}
+                            onClearSearch={() => setSearchQuery("")}
+                          />
                         </td>
                       </tr>
                     ) : (

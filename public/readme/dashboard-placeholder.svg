@@ -1,0 +1,16 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1440" height="900" fill="#F8F7F4"/>
+  <rect x="120" y="104" width="1200" height="692" rx="18" fill="#FFFFFF" stroke="#E5E2DB" stroke-width="2"/>
+  <circle cx="194" cy="175" r="24" fill="#F0FDF4"/>
+  <path d="M184 175H204M194 165V185" stroke="#1A6B54" stroke-width="3" stroke-linecap="round"/>
+  <text x="238" y="170" fill="#1C1917" font-family="Arial, sans-serif" font-size="28" font-weight="700">atama dashboard screenshot</text>
+  <text x="238" y="205" fill="#78716C" font-family="Arial, sans-serif" font-size="18">Replace this placeholder with your Plaid Sandbox overview capture.</text>
+  <rect x="180" y="272" width="1080" height="128" rx="12" fill="#F8F7F4"/>
+  <rect x="180" y="436" width="330" height="288" rx="12" fill="#F8F7F4"/>
+  <rect x="546" y="436" width="714" height="288" rx="12" fill="#F8F7F4"/>
+  <path d="M594 650L694 590L794 620L894 520L994 568L1094 492L1212 536" stroke="#1A6B54" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="694" cy="590" r="9" fill="#1A6B54"/>
+  <circle cx="894" cy="520" r="9" fill="#1A6B54"/>
+  <circle cx="1094" cy="492" r="9" fill="#1A6B54"/>
+  <text x="720" y="846" text-anchor="middle" fill="#A8A29E" font-family="Arial, sans-serif" font-size="16">Recommended capture size: 1440 × 900</text>
+</svg>

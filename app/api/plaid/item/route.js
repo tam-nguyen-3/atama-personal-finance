@@ -1,21 +1,5 @@
 import { plaidClient } from "@/lib/plaid";
-import fs from "fs/promises";
-import path from "path";
-
-const ITEMS_PATH = path.join(process.cwd(), "data", "items.json");
-
-async function readItems() {
-  try {
-    const data = await fs.readFile(ITEMS_PATH, "utf-8");
-    return JSON.parse(data);
-  } catch {
-    return [];
-  }
-}
-
-async function writeItems(items) {
-  await fs.writeFile(ITEMS_PATH, JSON.stringify(items, null, 2));
-}
+import { readPlaidItems, writePlaidItems } from "@/lib/plaid-items";
 
 export async function DELETE(request) {
   try {
@@ -26,7 +10,7 @@ export async function DELETE(request) {
       return Response.json({ error: "item_id is required" }, { status: 400 });
     }
 
-    const items = await readItems();
+    const items = await readPlaidItems();
     const item = items.find((i) => i.item_id === itemId);
 
     if (item) {
@@ -38,7 +22,7 @@ export async function DELETE(request) {
     }
 
     const filtered = items.filter((i) => i.item_id !== itemId);
-    await writeItems(filtered);
+    await writePlaidItems(filtered);
 
     return Response.json({ success: true });
   } catch (error) {

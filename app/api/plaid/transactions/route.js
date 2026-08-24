@@ -1,21 +1,5 @@
 import { plaidClient } from "@/lib/plaid";
-import fs from "fs/promises";
-import path from "path";
-
-const ITEMS_PATH = path.join(process.cwd(), "data", "items.json");
-
-async function readItems() {
-  try {
-    const data = await fs.readFile(ITEMS_PATH, "utf-8");
-    return JSON.parse(data);
-  } catch {
-    return [];
-  }
-}
-
-async function writeItems(items) {
-  await fs.writeFile(ITEMS_PATH, JSON.stringify(items, null, 2));
-}
+import { readPlaidItems, writePlaidItems } from "@/lib/plaid-items";
 
 async function syncTransactionsForItem(item) {
   const allAdded = [];
@@ -45,7 +29,7 @@ async function syncTransactionsForItem(item) {
 
 export async function GET() {
   try {
-    const items = await readItems();
+    const items = await readPlaidItems();
     if (items.length === 0) {
       return Response.json([]);
     }
@@ -73,7 +57,7 @@ export async function GET() {
       }
     }
     if (cursorsChanged) {
-      await writeItems(items);
+      await writePlaidItems(items);
     }
 
     const allTransactions = results.flatMap((r) => r.transactions);

@@ -10,8 +10,9 @@ const plusJakarta = Plus_Jakarta_Sans({
 });
 
 export const metadata = {
-  title: "atama",
-  description: "Personal finance dashboard",
+  title: "atama — Personal finance dashboard",
+  description:
+    "A calm personal finance dashboard for connected accounts, cash flow, transactions, and budgets.",
 };
 
 export default function RootLayout({ children }) {

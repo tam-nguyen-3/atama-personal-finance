@@ -25,8 +25,11 @@ export function BudgetProvider({ children }) {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    setBudgets(loadBudgets());
-    setLoaded(true);
+    const loadFromStorage = window.setTimeout(() => {
+      setBudgets(loadBudgets());
+      setLoaded(true);
+    }, 0);
+    return () => window.clearTimeout(loadFromStorage);
   }, []);
 
   useEffect(() => {
