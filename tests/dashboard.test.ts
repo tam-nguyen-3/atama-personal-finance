@@ -8,10 +8,12 @@ import {
   mergeTransactions,
   validateBudgetInput,
 } from "@/lib/dashboard";
+import type { Budget, DashboardTransaction } from "@/types/finance";
 
-const transactions = [
+const transactions: DashboardTransaction[] = [
   {
     transaction_id: "expense-1",
+    account_id: "checking",
     institution_name: "Tartan Bank",
     merchant_name: "Corner Market",
     name: "Corner Market",
@@ -21,6 +23,7 @@ const transactions = [
   },
   {
     transaction_id: "income-1",
+    account_id: "checking",
     institution_name: "Tartan Bank",
     name: "Payroll",
     date: "2026-08-01",
@@ -28,6 +31,7 @@ const transactions = [
   },
   {
     transaction_id: "expense-2",
+    account_id: "checking",
     institution_name: "First Platypus Bank",
     name: "Train pass",
     date: "2026-07-28",
@@ -38,7 +42,7 @@ const transactions = [
 
 describe("dashboard calculations", () => {
   it("merges, deduplicates, filters institutions, and sorts newest first", () => {
-    const updatedExpense = { ...transactions[0], amount: 45 };
+    const updatedExpense = { ...transactions[0]!, amount: 45 };
     const result = mergeTransactions(
       transactions,
       [updatedExpense],
@@ -46,8 +50,8 @@ describe("dashboard calculations", () => {
     );
 
     expect(result).toHaveLength(2);
-    expect(result[0].transaction_id).toBe("expense-1");
-    expect(result[0].amount).toBe(45);
+    expect(result[0]?.transaction_id).toBe("expense-1");
+    expect(result[0]?.amount).toBe(45);
   });
 
   it("aggregates expenses by normalized category", () => {
@@ -84,9 +88,11 @@ describe("dashboard calculations", () => {
   });
 
   it("totals only assigned expense transactions for each budget", () => {
-    const budgets = [
+    const budgets: Budget[] = [
       {
         id: "groceries",
+        name: "Groceries",
+        limit: 200,
         transactionIds: ["expense-1", "income-1", "missing"],
       },
     ];

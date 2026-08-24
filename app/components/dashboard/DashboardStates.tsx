@@ -1,6 +1,34 @@
 "use client";
 
-export function DashboardHeader({ onConnect, canConnect, connecting }) {
+type DashboardHeaderProps = {
+  onConnect: () => void;
+  canConnect: boolean;
+  connecting: boolean;
+};
+
+type ErrorBannerProps = {
+  message: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  onDismiss: () => void;
+};
+
+type EmptyAccountsProps = {
+  onConnect: () => void;
+  canConnect: boolean;
+  plaidUnavailable: boolean;
+};
+
+type EmptyTransactionsProps = {
+  hasSearch: boolean;
+  onClearSearch: () => void;
+};
+
+export function DashboardHeader({
+  onConnect,
+  canConnect,
+  connecting,
+}: DashboardHeaderProps) {
   return (
     <header className="flex items-center justify-between mb-10 animate-in">
       <div>
@@ -35,7 +63,12 @@ export function DashboardHeader({ onConnect, canConnect, connecting }) {
   );
 }
 
-export function ErrorBanner({ message, actionLabel, onAction, onDismiss }) {
+export function ErrorBanner({
+  message,
+  actionLabel,
+  onAction,
+  onDismiss,
+}: ErrorBannerProps) {
   return (
     <div
       role="alert"
@@ -86,7 +119,11 @@ export function DashboardLoading() {
   );
 }
 
-export function EmptyAccounts({ onConnect, canConnect, plaidUnavailable }) {
+export function EmptyAccounts({
+  onConnect,
+  canConnect,
+  plaidUnavailable,
+}: EmptyAccountsProps) {
   return (
     <section className="flex flex-col items-center justify-center py-24 text-center animate-in">
       <div
@@ -128,7 +165,10 @@ export function EmptyAccounts({ onConnect, canConnect, plaidUnavailable }) {
   );
 }
 
-export function EmptyTransactions({ hasSearch, onClearSearch }) {
+export function EmptyTransactions({
+  hasSearch,
+  onClearSearch,
+}: EmptyTransactionsProps) {
   return (
     <div className="px-5 py-14 text-center">
       <p className="text-[14px] font-600 mb-1">

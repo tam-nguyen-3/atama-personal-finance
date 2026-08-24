@@ -2,7 +2,9 @@
 
 import { Suspense, useState, useEffect, useCallback, useMemo } from "react";
 import { usePlaidLink } from "react-plaid-link";
+import type { PlaidLinkOnSuccess } from "react-plaid-link";
 import { useRouter, useSearchParams } from "next/navigation";
+import type { Route } from "next";
 import {
   BarChart,
   Bar,
@@ -13,6 +15,7 @@ import {
   Cell,
   ComposedChart,
   Line,
+  type TooltipValueType,
 } from "recharts";
 import { useBudgets } from "./components/BudgetContext";
 import { useTransactions } from "./components/TransactionContext";
@@ -36,6 +39,31 @@ import {
   sentenceCase,
   validateBudgetInput,
 } from "@/lib/dashboard";
+import { getErrorMessage } from "@/lib/errors";
+import type {
+  ApiErrorBody,
+  DashboardAccount,
+  DashboardError,
+  DashboardTransaction,
+} from "@/types/finance";
+
+type DashboardTab = "overview" | "cashflow" | "budget";
+
+const TABS: ReadonlyArray<{ key: DashboardTab; label: string }> = [
+  { key: "overview", label: "Overview" },
+  { key: "cashflow", label: "Cash Flow" },
+  { key: "budget", label: "Budget" },
+];
+
+function isDashboardTab(value: string): value is DashboardTab {
+  return TABS.some((tab) => tab.key === value);
+}
+
+function chartNumber(value: TooltipValueType | undefined): number {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  const parsed = Number(candidate ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 export default function DashboardPage() {
   return (
@@ -49,18 +77,18 @@ function Dashboard() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [linkToken, setLinkToken] = useState(null);
-  const [accounts, setAccounts] = useState([]);
+  const [linkToken, setLinkToken] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<DashboardAccount[]>([]);
   const { transactions, setTransactions } = useTransactions();
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<DashboardError | null>(null);
   const [connecting, setConnecting] = useState(false);
-  const [linkError, setLinkError] = useState(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
   // Tab state — initialized from URL ?tab= param
   const initialTab = searchParams.get("tab") || "overview";
-  const activeTab = ["overview", "cashflow", "budget"].includes(initialTab)
+  const activeTab: DashboardTab = isDashboardTab(initialTab)
     ? initialTab
     : "overview";
 
@@ -69,10 +97,10 @@ function Dashboard() {
   const [showBudgetForm, setShowBudgetForm] = useState(false);
   const [budgetName, setBudgetName] = useState("");
   const [budgetLimit, setBudgetLimit] = useState("");
-  const [budgetFormError, setBudgetFormError] = useState(null);
+  const [budgetFormError, setBudgetFormError] = useState<string | null>(null);
 
-  const handleTabChange = (tab) => {
-    router.replace(`/?tab=${tab}`, { scroll: false });
+  const handleTabChange = (tab: DashboardTab) => {
+    router.replace(`/?tab=${tab}` as Route, { scroll: false });
   };
 
   const fetchData = useCallback(async () => {
@@ -85,22 +113,24 @@ function Dashboard() {
       ]);
       if (!accountsRes.ok || !transactionsRes.ok) {
         const failedResponse = !accountsRes.ok ? accountsRes : transactionsRes;
-        const details = await failedResponse.json().catch(() => ({}));
+        const details = (await failedResponse
+          .json()
+          .catch(() => ({}))) as ApiErrorBody;
         throw new Error(
           details.error ||
             "We couldn’t reach Plaid. Your existing data is still available.",
         );
       }
-      const [accountsData, transactionsData] = await Promise.all([
+      const [accountsData, transactionsData]: [unknown, unknown] = await Promise.all([
         accountsRes.json(),
         transactionsRes.json(),
       ]);
 
       const normalizedAccounts = Array.isArray(accountsData)
-        ? accountsData
+        ? (accountsData as DashboardAccount[])
         : [];
       const normalizedTransactions = Array.isArray(transactionsData)
-        ? transactionsData
+        ? (transactionsData as DashboardTransaction[])
         : [];
 
       setAccounts(normalizedAccounts);
@@ -117,7 +147,7 @@ function Dashboard() {
         );
       });
     } catch (err) {
-      setError({ message: err.message, retry: true });
+      setError({ message: getErrorMessage(err), retry: true });
     } finally {
       setLoading(false);
     }
@@ -134,7 +164,7 @@ function Dashboard() {
       const res = await fetch("/api/plaid/create-link-token", {
         method: "POST",
       });
-      const data = await res.json();
+      const data = (await res.json()) as ApiErrorBody & { link_token?: string };
       if (!res.ok || !data.link_token) {
         throw new Error(
           data.error || "Bank connections are temporarily unavailable.",
@@ -142,7 +172,7 @@ function Dashboard() {
       }
       setLinkToken(data.link_token);
     } catch (err) {
-      setLinkError(err.message);
+      setLinkError(getErrorMessage(err));
     }
   }, []);
 
@@ -151,7 +181,7 @@ function Dashboard() {
     return () => window.clearTimeout(initialLinkToken);
   }, [createLinkToken]);
 
-  const onPlaidSuccess = useCallback(
+  const onPlaidSuccess: PlaidLinkOnSuccess = useCallback(
     async (publicToken, metadata) => {
       try {
         setConnecting(true);
@@ -165,14 +195,14 @@ function Dashboard() {
           }),
         });
         if (!res.ok) {
-          const details = await res.json().catch(() => ({}));
+          const details = (await res.json().catch(() => ({}))) as ApiErrorBody;
           throw new Error(
             details.error || "The bank connection could not be completed.",
           );
         }
         await fetchData();
       } catch (err) {
-        setError({ message: err.message, retry: false });
+        setError({ message: getErrorMessage(err), retry: false });
       } finally {
         setConnecting(false);
       }
@@ -194,19 +224,19 @@ function Dashboard() {
     },
   });
 
-  const handleDisconnect = async (itemId) => {
+  const handleDisconnect = async (itemId: string) => {
     try {
       setError(null);
       const res = await fetch(`/api/plaid/item?item_id=${itemId}`, {
         method: "DELETE",
       });
       if (!res.ok) {
-        const details = await res.json().catch(() => ({}));
+        const details = (await res.json().catch(() => ({}))) as ApiErrorBody;
         throw new Error(details.error || "The bank could not be disconnected.");
       }
       await fetchData();
     } catch (err) {
-      setError({ message: err.message, retry: true });
+      setError({ message: getErrorMessage(err), retry: true });
     }
   };
 
@@ -262,12 +292,6 @@ function Dashboard() {
     "#4a7d42",
   ];
 
-  const TABS = [
-    { key: "overview", label: "Overview" },
-    { key: "cashflow", label: "Cash Flow" },
-    { key: "budget", label: "Budget" },
-  ];
-
   return (
     <main className="max-w-[1200px] mx-auto px-6 py-8">
       <DashboardHeader
@@ -282,7 +306,7 @@ function Dashboard() {
       {/* Error */}
       {(error || linkError) && (
         <ErrorBanner
-          message={error?.message || linkError}
+          message={error?.message ?? linkError ?? "Something went wrong."}
           actionLabel={
             linkError ? "Retry connection" : error?.retry ? "Retry refresh" : undefined
           }
@@ -497,7 +521,7 @@ function Dashboard() {
                                 boxShadow: "none",
                               }}
                               formatter={(value) =>
-                                `$${value.toLocaleString("en-US", {
+                                `$${chartNumber(value).toLocaleString("en-US", {
                                   minimumFractionDigits: 2,
                                 })}`
                               }
@@ -621,7 +645,7 @@ function Dashboard() {
                               boxShadow: "none",
                             }}
                             formatter={(value, name) => [
-                              `$${Math.abs(value).toLocaleString("en-US", { minimumFractionDigits: 2 })}`,
+                              `$${Math.abs(chartNumber(value)).toLocaleString("en-US", { minimumFractionDigits: 2 })}`,
                               name === "income"
                                 ? "Income"
                                 : name === "expenses"

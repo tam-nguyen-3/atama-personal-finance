@@ -10,8 +10,14 @@ import {
   sentenceCase,
 } from "@/lib/dashboard";
 import { ErrorBanner } from "../../components/dashboard/DashboardStates";
+import { getErrorMessage } from "@/lib/errors";
+import type { ApiErrorBody, DashboardTransaction } from "@/types/finance";
 
-export default function BudgetDetailPage({ params }) {
+export default function BudgetDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   const { id } = use(params);
   const router = useRouter();
   const {
@@ -27,7 +33,7 @@ export default function BudgetDetailPage({ params }) {
   const [loadingTxns, setLoadingTxns] = useState(
     () => transactions.length === 0,
   );
-  const [transactionError, setTransactionError] = useState(null);
+  const [transactionError, setTransactionError] = useState<string | null>(null);
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [addSearch, setAddSearch] = useState("");
   const [editing, setEditing] = useState(false);
@@ -43,16 +49,18 @@ export default function BudgetDetailPage({ params }) {
     try {
       const res = await fetch("/api/plaid/transactions");
       if (!res.ok) {
-        const details = await res.json().catch(() => ({}));
+        const details = (await res.json().catch(() => ({}))) as ApiErrorBody;
         throw new Error(
           details.error || "We couldn’t refresh the available transactions.",
         );
       }
-      const data = await res.json();
-      const incoming = Array.isArray(data) ? data : [];
+      const data: unknown = await res.json();
+      const incoming = Array.isArray(data)
+        ? (data as DashboardTransaction[])
+        : [];
       setTransactions((prev) => mergeTransactions(prev, incoming));
     } catch (error) {
-      setTransactionError(error.message);
+      setTransactionError(getErrorMessage(error));
     } finally {
       setLoadingTxns(false);
     }

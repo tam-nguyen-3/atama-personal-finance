@@ -1,4 +1,6 @@
 import { Plus_Jakarta_Sans } from "next/font/google";
+import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import "./globals.css";
 import { BudgetProvider } from "./components/BudgetContext";
 import { TransactionProvider } from "./components/TransactionContext";
@@ -9,13 +11,13 @@ const plusJakarta = Plus_Jakarta_Sans({
   weight: ["300", "400", "500", "600", "700"],
 });
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "atama — Personal finance dashboard",
   description:
     "A calm personal finance dashboard for connected accounts, cash flow, transactions, and budgets.",
 };
 
-export default function RootLayout({ children }) {
+export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="en" className={plusJakarta.variable}>
       <body>

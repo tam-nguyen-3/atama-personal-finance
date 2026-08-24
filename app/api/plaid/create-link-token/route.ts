@@ -1,5 +1,6 @@
 import { isPlaidConfigured, plaidClient } from "@/lib/plaid";
 import { CountryCode, Products } from "plaid";
+import { getPlaidErrorDetails } from "@/lib/errors";
 
 export async function POST() {
   if (!isPlaidConfigured) {
@@ -19,7 +20,7 @@ export async function POST() {
     });
     return Response.json({ link_token: response.data.link_token });
   } catch (error) {
-    console.error("Error creating link token:", error.response?.data || error.message);
+    console.error("Error creating link token:", getPlaidErrorDetails(error));
     return Response.json(
       { error: "Failed to create link token" },
       { status: 500 }

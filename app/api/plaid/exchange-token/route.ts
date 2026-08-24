@@ -1,9 +1,16 @@
 import { isPlaidConfigured, plaidClient } from "@/lib/plaid";
 import { readPlaidItems, writePlaidItems } from "@/lib/plaid-items";
+import { getPlaidErrorDetails } from "@/lib/errors";
 
-export async function POST(request) {
+type ExchangeTokenBody = {
+  public_token?: string;
+  institution_name?: string;
+};
+
+export async function POST(request: Request) {
   try {
-    const { public_token, institution_name } = await request.json();
+    const { public_token, institution_name } =
+      (await request.json()) as ExchangeTokenBody;
 
     if (!isPlaidConfigured) {
       return Response.json(
@@ -35,7 +42,7 @@ export async function POST(request) {
 
     return Response.json({ success: true });
   } catch (error) {
-    console.error("Error exchanging token:", error.response?.data || error.message);
+    console.error("Error exchanging token:", getPlaidErrorDetails(error));
     return Response.json(
       { error: "Failed to exchange token" },
       { status: 500 }

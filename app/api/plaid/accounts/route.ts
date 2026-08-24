@@ -1,5 +1,7 @@
 import { plaidClient } from "@/lib/plaid";
 import { readPlaidItems } from "@/lib/plaid-items";
+import { getErrorMessage, getPlaidErrorDetails } from "@/lib/errors";
+import type { DashboardAccount } from "@/types/finance";
 
 export async function GET() {
   try {
@@ -8,7 +10,7 @@ export async function GET() {
       return Response.json([]);
     }
 
-    const results = await Promise.all(
+    const results: DashboardAccount[][] = await Promise.all(
       items.map(async (item) => {
         try {
           const response = await plaidClient.accountsGet({
@@ -20,7 +22,10 @@ export async function GET() {
             item_id: item.item_id,
           }));
         } catch (error) {
-          console.error(`Error fetching accounts for ${item.institution_name}:`, error.response?.data || error.message);
+          console.error(
+            `Error fetching accounts for ${item.institution_name}:`,
+            getPlaidErrorDetails(error),
+          );
           return [];
         }
       })
@@ -28,7 +33,7 @@ export async function GET() {
 
     return Response.json(results.flat());
   } catch (error) {
-    console.error("Error fetching accounts:", error.message);
+    console.error("Error fetching accounts:", getErrorMessage(error));
     return Response.json({ error: "Failed to fetch accounts" }, { status: 500 });
   }
 }
