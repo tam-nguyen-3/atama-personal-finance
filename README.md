@@ -1,5 +1,7 @@
 # atama
 
+[![CI](https://github.com/tam-nguyen-3/budget-app-1/actions/workflows/ci.yml/badge.svg)](https://github.com/tam-nguyen-3/budget-app-1/actions/workflows/ci.yml)
+
 A calm, local-first personal finance dashboard that brings connected bank accounts, transaction history, cash flow, and budgets into one view. Atama uses Plaid Sandbox for financial data and PostgreSQL for durable storage.
 
 ![Placeholder for the atama dashboard overview](public/readme/dashboard-placeholder.svg)
@@ -155,7 +157,17 @@ mise exec -- pnpm test
 mise exec -- pnpm build
 ```
 
-The focused tests cover transaction and budget calculations, UI states, opaque pagination cursors, AES-GCM encryption and tamper detection, and Plaid sync pagination recovery.
+To run the PostgreSQL integration suite against an isolated, disposable database on port 5433:
+
+```bash
+mise exec -- pnpm db:test:up
+mise exec -- pnpm test:integration
+mise exec -- pnpm db:test:down
+```
+
+The 18 unit tests cover transaction and budget calculations, UI states, opaque pagination cursors, AES-GCM encryption and tamper detection, Plaid sync pagination recovery, and webhook signatures. Ten PostgreSQL integration tests cover budget persistence, assignments, transaction queries, account visibility, sync atomicity, disconnect history, and webhook idempotency.
+
+GitHub Actions runs the unit-quality pipeline and PostgreSQL integration suite independently on pull requests and pushes to `main`.
 
 ## Current limitations
 

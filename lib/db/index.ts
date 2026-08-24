@@ -30,3 +30,10 @@ export function getDb(): Database {
 
   return database;
 }
+
+export async function closeDb(): Promise<void> {
+  const client = databaseGlobal.atamaPostgresClient;
+  delete databaseGlobal.atamaDatabase;
+  delete databaseGlobal.atamaPostgresClient;
+  if (client) await client.end({ timeout: 5 });
+}
