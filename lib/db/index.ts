@@ -15,7 +15,11 @@ const databaseGlobal = globalThis as typeof globalThis & {
 export function getDb(): Database {
   if (databaseGlobal.atamaDatabase) return databaseGlobal.atamaDatabase;
 
-  const databaseUrl = process.env.DATABASE_URL;
+  const databaseUrl =
+    process.env.DATABASE_URL?.trim() ||
+    (process.env.NEXT_PHASE === "phase-production-build"
+      ? "postgresql://build:build@127.0.0.1:1/build"
+      : undefined);
   if (!databaseUrl) {
     throw new ApiError(503, "NOT_CONFIGURED", "DATABASE_URL is not configured.");
   }

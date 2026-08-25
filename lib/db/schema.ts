@@ -1,219 +1,28 @@
-import {
-  bigint,
-  boolean,
-  date,
-  index,
-  integer,
-  jsonb,
-  numeric,
-  pgEnum,
-  pgTable,
-  primaryKey,
-  text,
-  timestamp,
-  uniqueIndex,
-  uuid,
-} from "drizzle-orm/pg-core";
+import { bigint, boolean, date, index, integer, jsonb, numeric, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
-export const LOCAL_USER_ID = "00000000-0000-4000-8000-000000000001";
+export const plaidItemStatus = pgEnum("plaid_item_status", ["active", "error", "disconnected"]);
+export const syncStatus = pgEnum("sync_status", ["running", "succeeded", "failed"]);
+export const syncTrigger = pgEnum("sync_trigger", ["link", "manual", "webhook"]);
 
-export const plaidItemStatus = pgEnum("plaid_item_status", [
-  "active",
-  "error",
-  "disconnected",
-]);
-
-export const syncStatus = pgEnum("sync_status", [
-  "running",
-  "succeeded",
-  "failed",
-]);
-
-export const syncTrigger = pgEnum("sync_trigger", [
-  "link",
-  "manual",
-  "webhook",
-]);
-
+// Better Auth's user model is also the sole owner of financial data.
 export const users = pgTable("users", {
-  id: uuid("id").primaryKey(),
-  displayName: text("display_name").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
+  id: uuid("id").primaryKey().defaultRandom(), displayName: text("display_name").notNull(), email: text("email").notNull().unique(), emailVerified: boolean("email_verified").default(false).notNull(), image: text("image"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+export const authSessions = pgTable("auth_sessions", { id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), token: text("token").notNull().unique(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), ipAddress: text("ip_address"), userAgent: text("user_agent"), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull() }, (t) => [index("auth_sessions_user_idx").on(t.userId)]);
+export const authAccounts = pgTable("auth_accounts", { id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), providerId: text("provider_id").notNull(), issuer: text("issuer").notNull(), accountId: text("account_id").notNull(), accessToken: text("access_token"), refreshToken: text("refresh_token"), idToken: text("id_token"), accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }), refreshTokenExpiresAt: timestamp("refresh_token_expires_at", { withTimezone: true }), scope: text("scope"), password: text("password"), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull() }, (t) => [uniqueIndex("auth_accounts_issuer_account_unique").on(t.issuer, t.accountId)]);
+export const authVerifications = pgTable("auth_verifications", { id: uuid("id").primaryKey().defaultRandom(), identifier: text("identifier").notNull(), value: text("value").notNull(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull() });
+export const authRateLimits = pgTable("auth_rate_limits", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  key: text("key").notNull().unique(),
+  count: integer("count").notNull(),
+  lastRequest: bigint("last_request", { mode: "number" }).notNull(),
 });
 
-export const plaidItems = pgTable(
-  "plaid_items",
-  {
-    id: text("id").primaryKey(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id),
-    institutionId: text("institution_id"),
-    institutionName: text("institution_name").notNull(),
-    accessTokenEncrypted: text("access_token_encrypted").notNull(),
-    cursor: text("cursor"),
-    status: plaidItemStatus("status").default("active").notNull(),
-    errorCode: text("error_code"),
-    errorMessage: text("error_message"),
-    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
-    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-  },
-  (table) => [index("plaid_items_user_status_idx").on(table.userId, table.status)],
-);
-
-export const accounts = pgTable(
-  "accounts",
-  {
-    id: text("id").primaryKey(),
-    itemId: text("item_id")
-      .notNull()
-      .references(() => plaidItems.id),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id),
-    name: text("name").notNull(),
-    officialName: text("official_name"),
-    mask: text("mask"),
-    type: text("type").notNull(),
-    subtype: text("subtype"),
-    currentBalance: numeric("current_balance", { precision: 18, scale: 2 }),
-    availableBalance: numeric("available_balance", { precision: 18, scale: 2 }),
-    isoCurrencyCode: text("iso_currency_code"),
-    archivedAt: timestamp("archived_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-  },
-  (table) => [index("accounts_user_item_idx").on(table.userId, table.itemId)],
-);
-
-export const transactions = pgTable(
-  "transactions",
-  {
-    id: text("id").primaryKey(),
-    itemId: text("item_id")
-      .notNull()
-      .references(() => plaidItems.id),
-    accountId: text("account_id").references(() => accounts.id),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id),
-    institutionName: text("institution_name").notNull(),
-    date: date("date").notNull(),
-    authorizedDate: date("authorized_date"),
-    amount: numeric("amount", { precision: 18, scale: 2 }).notNull(),
-    isoCurrencyCode: text("iso_currency_code"),
-    name: text("name").notNull(),
-    merchantName: text("merchant_name"),
-    categoryPrimary: text("category_primary"),
-    categoryDetailed: text("category_detailed"),
-    pending: boolean("pending").default(false).notNull(),
-    pendingTransactionId: text("pending_transaction_id"),
-    paymentChannel: text("payment_channel"),
-    removedAt: timestamp("removed_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-  },
-  (table) => [
-    index("transactions_user_date_id_idx").on(
-      table.userId,
-      table.date,
-      table.id,
-    ),
-    index("transactions_item_idx").on(table.itemId),
-  ],
-);
-
-export const budgets = pgTable(
-  "budgets",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id),
-    name: text("name").notNull(),
-    limit: numeric("limit", { precision: 12, scale: 2 }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-  },
-  (table) => [index("budgets_user_created_idx").on(table.userId, table.createdAt)],
-);
-
-export const budgetTransactions = pgTable(
-  "budget_transactions",
-  {
-    budgetId: uuid("budget_id")
-      .notNull()
-      .references(() => budgets.id, { onDelete: "cascade" }),
-    transactionId: text("transaction_id")
-      .notNull()
-      .references(() => transactions.id),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.budgetId, table.transactionId] }),
-    uniqueIndex("budget_transactions_transaction_unique").on(
-      table.transactionId,
-    ),
-  ],
-);
-
-export const syncRuns = pgTable(
-  "sync_runs",
-  {
-    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
-    itemId: text("item_id")
-      .notNull()
-      .references(() => plaidItems.id),
-    trigger: syncTrigger("trigger").notNull(),
-    status: syncStatus("status").default("running").notNull(),
-    addedCount: integer("added_count").default(0).notNull(),
-    modifiedCount: integer("modified_count").default(0).notNull(),
-    removedCount: integer("removed_count").default(0).notNull(),
-    errorMessage: text("error_message"),
-    startedAt: timestamp("started_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    finishedAt: timestamp("finished_at", { withTimezone: true }),
-  },
-  (table) => [index("sync_runs_item_started_idx").on(table.itemId, table.startedAt)],
-);
-
-export const plaidWebhooks = pgTable(
-  "plaid_webhooks",
-  {
-    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
-    bodySha256: text("body_sha256").notNull(),
-    itemId: text("item_id"),
-    webhookType: text("webhook_type").notNull(),
-    webhookCode: text("webhook_code").notNull(),
-    payload: jsonb("payload").notNull(),
-    verifiedAt: timestamp("verified_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    processedAt: timestamp("processed_at", { withTimezone: true }),
-    processingError: text("processing_error"),
-  },
-  (table) => [uniqueIndex("plaid_webhooks_body_sha256_unique").on(table.bodySha256)],
-);
+export const plaidItems = pgTable("plaid_items", { id: text("id").primaryKey(), userId: uuid("user_id").notNull().references(() => users.id), institutionId: text("institution_id"), institutionName: text("institution_name").notNull(), accessTokenEncrypted: text("access_token_encrypted").notNull(), cursor: text("cursor"), status: plaidItemStatus("status").default("active").notNull(), errorCode: text("error_code"), errorMessage: text("error_message"), lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }), disconnectedAt: timestamp("disconnected_at", { withTimezone: true }), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull() }, (t) => [index("plaid_items_user_status_idx").on(t.userId, t.status), uniqueIndex("plaid_items_id_user_unique").on(t.id, t.userId)]);
+export const accounts = pgTable("accounts", { id: text("id").primaryKey(), itemId: text("item_id").notNull(), userId: uuid("user_id").notNull(), name: text("name").notNull(), officialName: text("official_name"), mask: text("mask"), type: text("type").notNull(), subtype: text("subtype"), currentBalance: numeric("current_balance", { precision: 18, scale: 2 }), availableBalance: numeric("available_balance", { precision: 18, scale: 2 }), isoCurrencyCode: text("iso_currency_code"), archivedAt: timestamp("archived_at", { withTimezone: true }), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull() }, (t) => [index("accounts_user_item_idx").on(t.userId, t.itemId), uniqueIndex("accounts_id_user_unique").on(t.id, t.userId)]);
+export const transactions = pgTable("transactions", { id: text("id").primaryKey(), itemId: text("item_id").notNull(), accountId: text("account_id"), userId: uuid("user_id").notNull(), institutionName: text("institution_name").notNull(), date: date("date").notNull(), authorizedDate: date("authorized_date"), amount: numeric("amount", { precision: 18, scale: 2 }).notNull(), isoCurrencyCode: text("iso_currency_code"), name: text("name").notNull(), merchantName: text("merchant_name"), categoryPrimary: text("category_primary"), categoryDetailed: text("category_detailed"), pending: boolean("pending").default(false).notNull(), pendingTransactionId: text("pending_transaction_id"), paymentChannel: text("payment_channel"), removedAt: timestamp("removed_at", { withTimezone: true }), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull() }, (t) => [index("transactions_user_date_id_idx").on(t.userId, t.date, t.id), index("transactions_item_idx").on(t.itemId), uniqueIndex("transactions_id_user_unique").on(t.id, t.userId)]);
+export const budgets = pgTable("budgets", { id: uuid("id").defaultRandom().primaryKey(), userId: uuid("user_id").notNull().references(() => users.id), name: text("name").notNull(), limit: numeric("limit", { precision: 12, scale: 2 }).notNull(), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull() }, (t) => [index("budgets_user_created_idx").on(t.userId, t.createdAt), uniqueIndex("budgets_id_user_unique").on(t.id, t.userId)]);
+export const budgetTransactions = pgTable("budget_transactions", { budgetId: uuid("budget_id").notNull(), transactionId: text("transaction_id").notNull(), userId: uuid("user_id").notNull().references(() => users.id), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull() }, (t) => [primaryKey({ columns: [t.budgetId, t.transactionId] }), uniqueIndex("budget_transactions_transaction_user_unique").on(t.transactionId, t.userId)]);
+export const syncRuns = pgTable("sync_runs", { id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(), itemId: text("item_id").notNull().references(() => plaidItems.id), trigger: syncTrigger("trigger").notNull(), status: syncStatus("status").default("running").notNull(), addedCount: integer("added_count").default(0).notNull(), modifiedCount: integer("modified_count").default(0).notNull(), removedCount: integer("removed_count").default(0).notNull(), errorMessage: text("error_message"), startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(), finishedAt: timestamp("finished_at", { withTimezone: true }) }, (t) => [index("sync_runs_item_started_idx").on(t.itemId, t.startedAt)]);
+export const plaidWebhooks = pgTable("plaid_webhooks", { id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(), bodySha256: text("body_sha256").notNull(), itemId: text("item_id"), webhookType: text("webhook_type").notNull(), webhookCode: text("webhook_code").notNull(), payload: jsonb("payload").notNull(), verifiedAt: timestamp("verified_at", { withTimezone: true }).defaultNow().notNull(), processedAt: timestamp("processed_at", { withTimezone: true }), processingError: text("processing_error") }, (t) => [uniqueIndex("plaid_webhooks_body_sha256_unique").on(t.bodySha256)]);

@@ -1,6 +1,6 @@
 {
-  "id": "f4be9953-de64-412c-9e42-87d3b2ca39a9",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "9f0d6e4c-a4df-49d1-9665-e8993c4d80f2",
+  "prevId": "f4be9953-de64-412c-9e42-87d3b2ca39a9",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -286,10 +286,17 @@
       "name": "auth_rate_limits",
       "schema": "",
       "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
         "key": {
           "name": "key",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "count": {
@@ -308,7 +315,15 @@
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "auth_rate_limits_key_unique": {
+          "name": "auth_rate_limits_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "key"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

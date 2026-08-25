@@ -5,6 +5,9 @@ process.env.DATABASE_URL ??=
   "postgresql://atama:atama@localhost:5433/atama_test";
 process.env.PLAID_TOKEN_ENCRYPTION_KEY ??=
   "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+process.env.BETTER_AUTH_SECRET ??=
+  "deterministic-better-auth-integration-test-secret";
+process.env.BETTER_AUTH_URL ??= "http://localhost:3000";
 
 export default defineConfig({
   resolve: {
