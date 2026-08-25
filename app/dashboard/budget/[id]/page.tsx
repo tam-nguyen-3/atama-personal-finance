@@ -2,13 +2,13 @@
 
 import { use, useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { useBudgets } from "../../components/BudgetContext";
-import { useTransactions } from "../../components/TransactionContext";
+import { useBudgets } from "../../../components/BudgetContext";
+import { useTransactions } from "../../../components/TransactionContext";
 import {
   getProgressColor,
   sentenceCase,
 } from "@/lib/dashboard";
-import { ErrorBanner } from "../../components/dashboard/DashboardStates";
+import { ErrorBanner } from "../../../components/dashboard/DashboardStates";
 import { getApiErrorMessage, getErrorMessage } from "@/lib/errors";
 import type { TransactionsPage } from "@/types/finance";
 
@@ -137,7 +137,7 @@ export default function BudgetDetailPage({
     if (budget && confirm(`Delete "${budget.name}" budget?`)) {
       try {
         await deleteBudget(id);
-        router.push("/?tab=budget");
+        router.push("/dashboard?tab=budget");
       } catch (error) {
         setTransactionError(getErrorMessage(error));
       }
@@ -185,7 +185,7 @@ export default function BudgetDetailPage({
             This budget may have been deleted.
           </p>
           <button
-            onClick={() => router.push("/?tab=budget")}
+            onClick={() => router.push("/dashboard?tab=budget")}
             className="text-[13px] font-600 px-5 py-2.5 rounded-full text-white"
             style={{ backgroundColor: "var(--color-accent)" }}
           >
@@ -211,7 +211,7 @@ export default function BudgetDetailPage({
       )}
       {/* Back Button */}
       <button
-        onClick={() => router.push("/?tab=budget")}
+        onClick={() => router.push("/dashboard?tab=budget")}
         className="flex items-center gap-1.5 text-[13px] font-500 mb-6 transition-colors animate-in"
         style={{ color: "var(--color-text-muted)" }}
         onMouseEnter={(e) =>

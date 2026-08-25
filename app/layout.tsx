@@ -2,8 +2,6 @@ import { Plus_Jakarta_Sans } from "next/font/google";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
-import { BudgetProvider } from "./components/BudgetContext";
-import { TransactionProvider } from "./components/TransactionContext";
 
 const plusJakarta = Plus_Jakarta_Sans({
   variable: "--font-jakarta",
@@ -20,11 +18,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="en" className={plusJakarta.variable}>
-      <body>
-        <BudgetProvider>
-          <TransactionProvider>{children}</TransactionProvider>
-        </BudgetProvider>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

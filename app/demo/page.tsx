@@ -1,0 +1,3 @@
+import Link from "next/link";
+import { demoAccounts, demoBudgets, demoTransactions } from "@/lib/demo-fixtures";
+export default function DemoPage() { return <main className="landing"><p className="eyebrow">Public demo</p><h1>See atama in action</h1><p>{demoAccounts[0]?.institution_name} · {demoAccounts[0]?.name}: ${demoAccounts[0]?.balances.current?.toLocaleString()}</p><h2>Recent activity</h2><ul>{demoTransactions.map((t) => <li key={t.transaction_id}>{t.date} — {t.name}: ${t.amount}</li>)}</ul><h2>Budgets</h2><ul>{demoBudgets.map((b) => <li key={b.id}><Link href={`/demo/budget/${b.id}`}>{b.name}</Link>: ${b.limit}</li>)}</ul><Link href="/signup">Create your own dashboard</Link></main>; }
