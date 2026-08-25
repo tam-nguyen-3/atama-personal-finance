@@ -49,7 +49,7 @@ erDiagram
   TRANSACTIONS ||--o| BUDGET_TRANSACTIONS : assigned_to
 ```
 
-The initial migration seeds one local user. Ownership columns intentionally remain in the schema so authentication can be added without redesigning financial records.
+Better Auth owns the `users`, sessions, accounts, verification, and rate-limit tables. Every financial record is scoped to the signed-in user.
 
 ## Tech stack
 
@@ -68,6 +68,7 @@ The initial migration seeds one local user. Ownership columns intentionally rema
 - Docker Desktop or another Docker Compose-compatible runtime
 - [mise](https://mise.jdx.dev/) (the repository pins Node.js 22)
 - Plaid Sandbox client ID and secret
+- A Better Auth secret (and Resend credentials if password-reset emails should be delivered)
 
 ### Install and configure
 
@@ -78,22 +79,27 @@ mise install
 mise exec -- pnpm install
 ```
 
-Copy the environment template. If you already have a local `.env`, add only the new database and encryption variables instead of overwriting it.
+Copy the environment template. If you already have a local `.env`, add only the missing variables instead of overwriting it. Generate separate values for the Better Auth secret and Plaid encryption key; do not reuse either value.
 
 ```bash
 cp .env.example .env
-openssl rand -base64 32
+openssl rand -base64 32 # BETTER_AUTH_SECRET
+openssl rand -base64 32 # PLAID_TOKEN_ENCRYPTION_KEY
 ```
 
 Set the generated encryption key and your Sandbox credentials:
 
 ```dotenv
 DATABASE_URL=postgresql://atama:atama@localhost:5432/atama
+BETTER_AUTH_SECRET=your_generated_auth_secret
+BETTER_AUTH_URL=http://localhost:3000
 PLAID_TOKEN_ENCRYPTION_KEY=your_generated_32_byte_base64_key
 PLAID_CLIENT_ID=your_client_id
 PLAID_SECRET=your_sandbox_secret
 PLAID_ENV=sandbox
 ```
+
+Production requires an explicit `BETTER_AUTH_URL` using HTTPS. The application refuses to initialize authentication when `BETTER_AUTH_SECRET` is missing, blank, or shorter than 32 characters.
 
 Do not rotate `PLAID_TOKEN_ENCRYPTION_KEY` after connecting an Item unless its stored token is re-encrypted; old ciphertext cannot be decrypted with a different key.
 
@@ -103,6 +109,34 @@ Start PostgreSQL, apply the checked-in migration, and run the app:
 mise exec -- pnpm db:up
 mise exec -- pnpm db:migrate
 mise exec -- pnpm dev
+```
+
+### Docker database controls
+
+Start the database in the background:
+
+```bash
+mise exec -- pnpm db:up
+```
+
+Restart it without deleting data:
+
+```bash
+docker compose restart database
+```
+
+Stop it without deleting data:
+
+```bash
+mise exec -- pnpm db:down
+```
+
+If you need a completely fresh local database, stop it and explicitly remove the volume, then start and migrate again. This permanently deletes local accounts, sessions, and financial data:
+
+```bash
+docker compose down -v
+mise exec -- pnpm db:up
+mise exec -- pnpm db:migrate
 ```
 
 Open [http://localhost:3000](http://localhost:3000), select **Connect a Bank**, and use Plaid’s Sandbox credentials:
@@ -171,11 +205,13 @@ GitHub Actions runs the unit-quality pipeline and PostgreSQL integration suite i
 
 ## Current limitations
 
-Atama is a single-user, local, Sandbox-only portfolio application. Its REST endpoints do not yet require authentication, so do not expose the app publicly or use it with real financial data. A future authentication layer can use the existing ownership columns to isolate records per user.
+Atama is a multi-user, Sandbox-only application. It supports only email/password authentication; real Plaid data is intentionally out of scope.
 
 ## Roadmap
 
-- Add authentication and per-user authorization
 - Add monthly budget periods and category-based allocation
 - Detect recurring expenses and summarize month-over-month changes
 - Add background job processing for webhook-triggered syncs
+# Authentication and database reset
+
+This release replaces the original seeded local user with Better Auth accounts. Before applying the new initial migration locally, explicitly discard the old Docker database volume yourself (for example, `docker compose down -v`), then run `mise exec -- pnpm db:up` and `mise exec -- pnpm db:migrate`. This is intentionally not automated because it deletes local financial data.
