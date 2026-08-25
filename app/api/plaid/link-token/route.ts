@@ -1,9 +1,9 @@
 import { apiError, ApiError } from "@/lib/api";
 import { isPlaidConfigured, plaidClient } from "@/lib/plaid";
 import { CountryCode, Products } from "plaid";
-import { LOCAL_USER_ID } from "@/lib/db/schema";
+import { requireUserId } from "@/lib/auth";
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
     if (!isPlaidConfigured) {
       throw new ApiError(
@@ -15,7 +15,7 @@ export async function POST() {
 
     const webhook = process.env.PLAID_WEBHOOK_URL?.trim();
     const response = await plaidClient.linkTokenCreate({
-      user: { client_user_id: LOCAL_USER_ID },
+      user: { client_user_id: await requireUserId(request) },
       client_name: "atama",
       products: [Products.Transactions],
       country_codes: [CountryCode.Us],

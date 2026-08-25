@@ -1,5 +1,6 @@
 import { apiError, ApiError } from "@/lib/api";
 import { listTransactions } from "@/lib/db/queries";
+import { requireUserId } from "@/lib/auth";
 
 export async function GET(request: Request) {
   try {
@@ -15,7 +16,7 @@ export async function GET(request: Request) {
     }
 
     return Response.json(
-      await listTransactions({
+      await listTransactions(await requireUserId(request), {
         limit,
         cursor: searchParams.get("cursor") ?? undefined,
         query: searchParams.get("query") ?? undefined,

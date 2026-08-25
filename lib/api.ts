@@ -8,6 +8,7 @@ export type ApiErrorCode =
   | "NOT_CONFIGURED"
   | "PLAID_ERROR"
   | "UNAUTHORIZED"
+  | "TOO_MANY_REQUESTS"
   | "INTERNAL_ERROR";
 
 export class ApiError extends Error {

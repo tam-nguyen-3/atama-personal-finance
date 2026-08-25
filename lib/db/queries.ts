@@ -27,7 +27,6 @@ import {
   accounts,
   budgets,
   budgetTransactions,
-  LOCAL_USER_ID,
   plaidItems,
   transactions,
 } from "./schema";
@@ -36,14 +35,14 @@ function numberOrNull(value: string | null): number | null {
   return value === null ? null : Number(value);
 }
 
-export async function listAccounts(): Promise<DashboardAccount[]> {
+export async function listAccounts(userId: string): Promise<DashboardAccount[]> {
   const rows = await getDb()
     .select({ account: accounts, item: plaidItems })
     .from(accounts)
     .innerJoin(plaidItems, eq(accounts.itemId, plaidItems.id))
     .where(
       and(
-        eq(accounts.userId, LOCAL_USER_ID),
+        eq(accounts.userId, userId),
         inArray(plaidItems.status, ["active", "error"]),
         isNull(accounts.archivedAt),
       ),
@@ -65,7 +64,7 @@ export async function listAccounts(): Promise<DashboardAccount[]> {
   }));
 }
 
-export async function listTransactions(options: {
+export async function listTransactions(userId: string, options: {
   limit: number;
   cursor?: string;
   query?: string;
@@ -96,7 +95,7 @@ export async function listTransactions(options: {
     .from(transactions)
     .where(
       and(
-        eq(transactions.userId, LOCAL_USER_ID),
+        eq(transactions.userId, userId),
         isNull(transactions.removedAt),
         search,
         afterCursor,
@@ -133,11 +132,11 @@ export async function listTransactions(options: {
   };
 }
 
-export async function listBudgets(): Promise<Budget[]> {
+export async function listBudgets(userId: string): Promise<Budget[]> {
   const budgetRows = await getDb()
     .select()
     .from(budgets)
-    .where(eq(budgets.userId, LOCAL_USER_ID))
+    .where(eq(budgets.userId, userId))
     .orderBy(budgets.createdAt);
 
   if (budgetRows.length === 0) return [];
@@ -166,22 +165,22 @@ export async function listBudgets(): Promise<Budget[]> {
   }));
 }
 
-export async function getBudget(id: string): Promise<Budget> {
-  const budget = (await listBudgets()).find((candidate) => candidate.id === id);
+export async function getBudget(userId: string, id: string): Promise<Budget> {
+  const budget = (await listBudgets(userId)).find((candidate) => candidate.id === id);
   if (!budget) {
     throw new ApiError(404, "NOT_FOUND", "Budget not found.");
   }
   return budget;
 }
 
-export async function createBudget(input: {
+export async function createBudget(userId: string, input: {
   name: string;
   limit: number;
 }): Promise<Budget> {
   const [created] = await getDb()
     .insert(budgets)
     .values({
-      userId: LOCAL_USER_ID,
+      userId,
       name: input.name,
       limit: input.limit.toFixed(2),
     })
@@ -195,7 +194,7 @@ export async function createBudget(input: {
   };
 }
 
-export async function updateBudget(
+export async function updateBudget(userId: string,
   id: string,
   updates: BudgetUpdates,
 ): Promise<Budget> {
@@ -208,32 +207,32 @@ export async function updateBudget(
   const [updated] = await getDb()
     .update(budgets)
     .set(values)
-    .where(and(eq(budgets.id, id), eq(budgets.userId, LOCAL_USER_ID)))
+    .where(and(eq(budgets.id, id), eq(budgets.userId, userId)))
     .returning({ id: budgets.id });
   if (!updated) throw new ApiError(404, "NOT_FOUND", "Budget not found.");
-  return getBudget(id);
+  return getBudget(userId, id);
 }
 
-export async function deleteBudget(id: string): Promise<void> {
+export async function deleteBudget(userId: string, id: string): Promise<void> {
   const [deleted] = await getDb()
     .delete(budgets)
-    .where(and(eq(budgets.id, id), eq(budgets.userId, LOCAL_USER_ID)))
+    .where(and(eq(budgets.id, id), eq(budgets.userId, userId)))
     .returning({ id: budgets.id });
   if (!deleted) throw new ApiError(404, "NOT_FOUND", "Budget not found.");
 }
 
-export async function assignTransaction(
+export async function assignTransaction(userId: string,
   budgetId: string,
   transactionId: string,
 ): Promise<Budget> {
-  await getBudget(budgetId);
+  await getBudget(userId, budgetId);
   const [transaction] = await getDb()
     .select({ id: transactions.id })
     .from(transactions)
     .where(
       and(
         eq(transactions.id, transactionId),
-        eq(transactions.userId, LOCAL_USER_ID),
+        eq(transactions.userId, userId),
         isNull(transactions.removedAt),
       ),
     )
@@ -245,7 +244,7 @@ export async function assignTransaction(
   const [existing] = await getDb()
     .select({ budgetId: budgetTransactions.budgetId })
     .from(budgetTransactions)
-    .where(eq(budgetTransactions.transactionId, transactionId))
+    .where(and(eq(budgetTransactions.transactionId, transactionId), eq(budgetTransactions.userId, userId)))
     .limit(1);
   if (existing && existing.budgetId !== budgetId) {
     throw new ApiError(
@@ -257,23 +256,24 @@ export async function assignTransaction(
   if (!existing) {
     await getDb()
       .insert(budgetTransactions)
-      .values({ budgetId, transactionId });
+      .values({ budgetId, transactionId, userId });
   }
-  return getBudget(budgetId);
+  return getBudget(userId, budgetId);
 }
 
-export async function unassignTransaction(
+export async function unassignTransaction(userId: string,
   budgetId: string,
   transactionId: string,
 ): Promise<Budget> {
-  await getBudget(budgetId);
+  await getBudget(userId, budgetId);
   await getDb()
     .delete(budgetTransactions)
     .where(
       and(
         eq(budgetTransactions.budgetId, budgetId),
         eq(budgetTransactions.transactionId, transactionId),
+        eq(budgetTransactions.userId, userId),
       ),
     );
-  return getBudget(budgetId);
+  return getBudget(userId, budgetId);
 }

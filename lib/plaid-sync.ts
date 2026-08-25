@@ -6,7 +6,6 @@ import { ApiError } from "@/lib/api";
 import { getDb } from "@/lib/db";
 import {
   accounts,
-  LOCAL_USER_ID,
   plaidItems,
   syncRuns,
   transactions,
@@ -46,7 +45,7 @@ function accountValues(item: PlaidItem, account: AccountBase) {
   return {
     id: account.account_id,
     itemId: item.id,
-    userId: LOCAL_USER_ID,
+    userId: item.userId,
     name: account.name,
     officialName: account.official_name,
     mask: account.mask,
@@ -71,7 +70,7 @@ function transactionValues(item: PlaidItem, transaction: Transaction) {
     id: transaction.transaction_id,
     itemId: item.id,
     accountId: transaction.account_id,
-    userId: LOCAL_USER_ID,
+    userId: item.userId,
     institutionName: item.institutionName,
     date: transaction.date,
     authorizedDate: transaction.authorized_date,
@@ -253,6 +252,7 @@ async function performItemSync(
 export async function syncItem(
   itemId: string,
   trigger: SyncTrigger,
+  userId?: string,
 ): Promise<SyncResult> {
   const current = activeSyncs.get(itemId);
   if (current) return current;
@@ -262,10 +262,7 @@ export async function syncItem(
       .select()
       .from(plaidItems)
       .where(
-        and(
-          eq(plaidItems.id, itemId),
-          eq(plaidItems.userId, LOCAL_USER_ID),
-        ),
+        userId ? and(eq(plaidItems.id, itemId), eq(plaidItems.userId, userId)) : eq(plaidItems.id, itemId),
       )
       .limit(1);
     if (!item || item.status === "disconnected") {
@@ -282,7 +279,7 @@ export async function syncItem(
   }
 }
 
-export async function syncAllItems(trigger: SyncTrigger): Promise<{
+export async function syncAllItems(userId: string, trigger: SyncTrigger): Promise<{
   results: SyncResult[];
   failures: Array<{ itemId: string; message: string }>;
 }> {
@@ -291,12 +288,12 @@ export async function syncAllItems(trigger: SyncTrigger): Promise<{
     .from(plaidItems)
     .where(
       and(
-        eq(plaidItems.userId, LOCAL_USER_ID),
+        eq(plaidItems.userId, userId),
         inArray(plaidItems.status, ["active", "error"]),
       ),
     );
   const settled = await Promise.allSettled(
-    items.map((item) => syncItem(item.id, trigger)),
+    items.map((item) => syncItem(item.id, trigger, userId)),
   );
   const results: SyncResult[] = [];
   const failures: Array<{ itemId: string; message: string }> = [];
