@@ -39,7 +39,13 @@ export async function listAccounts(userId: string): Promise<DashboardAccount[]> 
   const rows = await getDb()
     .select({ account: accounts, item: plaidItems })
     .from(accounts)
-    .innerJoin(plaidItems, eq(accounts.itemId, plaidItems.id))
+    .innerJoin(
+      plaidItems,
+      and(
+        eq(accounts.itemId, plaidItems.id),
+        eq(accounts.userId, plaidItems.userId),
+      ),
+    )
     .where(
       and(
         eq(accounts.userId, userId),
@@ -91,11 +97,19 @@ export async function listTransactions(userId: string, options: {
     : undefined;
 
   const rows = await getDb()
-    .select()
+    .select({ transaction: transactions })
     .from(transactions)
+    .innerJoin(
+      plaidItems,
+      and(
+        eq(transactions.itemId, plaidItems.id),
+        eq(transactions.userId, plaidItems.userId),
+      ),
+    )
     .where(
       and(
         eq(transactions.userId, userId),
+        inArray(plaidItems.status, ["active", "error"]),
         isNull(transactions.removedAt),
         search,
         afterCursor,
@@ -106,7 +120,7 @@ export async function listTransactions(userId: string, options: {
 
   const hasMore = rows.length > options.limit;
   const pageRows = hasMore ? rows.slice(0, options.limit) : rows;
-  const data: DashboardTransaction[] = pageRows.map((transaction) => ({
+  const data: DashboardTransaction[] = pageRows.map(({ transaction }) => ({
     transaction_id: transaction.id,
     account_id: transaction.accountId ?? undefined,
     date: transaction.date,
@@ -121,7 +135,7 @@ export async function listTransactions(userId: string, options: {
       : null,
     institution_name: transaction.institutionName,
   }));
-  const last = pageRows.at(-1);
+  const last = pageRows.at(-1)?.transaction;
 
   return {
     data,
@@ -142,12 +156,36 @@ export async function listBudgets(userId: string): Promise<Budget[]> {
   if (budgetRows.length === 0) return [];
 
   const assignments = await getDb()
-    .select()
+    .select({
+      budgetId: budgetTransactions.budgetId,
+      transactionId: budgetTransactions.transactionId,
+    })
     .from(budgetTransactions)
+    .innerJoin(
+      transactions,
+      and(
+        eq(budgetTransactions.transactionId, transactions.id),
+        eq(budgetTransactions.userId, transactions.userId),
+      ),
+    )
+    .innerJoin(
+      plaidItems,
+      and(
+        eq(transactions.itemId, plaidItems.id),
+        eq(transactions.userId, plaidItems.userId),
+      ),
+    )
     .where(
-      inArray(
-        budgetTransactions.budgetId,
-        budgetRows.map((budget) => budget.id),
+      and(
+        inArray(
+          budgetTransactions.budgetId,
+          budgetRows.map((budget) => budget.id),
+        ),
+        eq(budgetTransactions.userId, userId),
+        eq(transactions.userId, userId),
+        isNull(transactions.removedAt),
+        eq(plaidItems.userId, userId),
+        inArray(plaidItems.status, ["active", "error"]),
       ),
     );
   const transactionIdsByBudget = new Map<string, string[]>();
@@ -229,10 +267,18 @@ export async function assignTransaction(userId: string,
   const [transaction] = await getDb()
     .select({ id: transactions.id })
     .from(transactions)
+    .innerJoin(
+      plaidItems,
+      and(
+        eq(transactions.itemId, plaidItems.id),
+        eq(transactions.userId, plaidItems.userId),
+      ),
+    )
     .where(
       and(
         eq(transactions.id, transactionId),
         eq(transactions.userId, userId),
+        inArray(plaidItems.status, ["active", "error"]),
         isNull(transactions.removedAt),
       ),
     )

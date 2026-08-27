@@ -24,6 +24,11 @@ type EmptyTransactionsProps = {
   onClearSearch: () => void;
 };
 
+type SuccessBannerProps = {
+  message: string;
+  onDismiss: () => void;
+};
+
 export function DashboardHeader({
   onConnect,
   canConnect,
@@ -98,6 +103,29 @@ export function ErrorBanner({
           Dismiss
         </button>
       </div>
+    </div>
+  );
+}
+
+export function SuccessBanner({ message, onDismiss }: SuccessBannerProps) {
+  return (
+    <div
+      role="status"
+      className="flex items-center justify-between gap-4 px-4 py-3 rounded-[10px] mb-6 text-[13px] animate-in"
+      style={{
+        backgroundColor: "var(--color-positive-bg)",
+        color: "var(--color-positive)",
+        border: "1px solid color-mix(in srgb, var(--color-positive) 24%, var(--color-border))",
+      }}
+    >
+      <p className="font-600">{message}</p>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="font-600 opacity-70 hover:opacity-100 transition-opacity"
+      >
+        Dismiss
+      </button>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { and, eq } from "drizzle-orm";
+import { ItemRemoveReasonCode } from "plaid";
 import { ApiError } from "@/lib/api";
 import { getDb } from "@/lib/db";
 import { accounts, plaidItems } from "@/lib/db/schema";
@@ -10,6 +11,12 @@ import {
   decryptAccessToken,
   encryptAccessToken,
 } from "@/lib/security/token-encryption";
+
+function plaidDetail(details: unknown, key: string): string | null {
+  if (!details || typeof details !== "object" || !(key in details)) return null;
+  const value = (details as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : null;
+}
 
 export async function storePlaidItem(input: {
   userId: string;
@@ -61,16 +68,31 @@ export async function disconnectPlaidItem(userId: string, itemId: string): Promi
       and(eq(plaidItems.id, itemId), eq(plaidItems.userId, userId)),
     )
     .limit(1);
-  if (!item || item.status === "disconnected") {
+  if (!item) {
     throw new ApiError(404, "NOT_FOUND", "Connected Plaid Item not found.");
   }
+  if (item.status === "disconnected") return;
 
   try {
     await plaidClient.itemRemove({
       access_token: decryptAccessToken(item.accessTokenEncrypted),
+      reason_code: ItemRemoveReasonCode.Other,
     });
   } catch (error) {
-    console.error("Plaid Item removal failed; disconnecting locally:", getPlaidErrorDetails(error));
+    const details = getPlaidErrorDetails(error);
+    const errorCode = plaidDetail(details, "error_code");
+    if (errorCode !== "ITEM_NOT_FOUND") {
+      console.error("Plaid Item removal failed:", {
+        errorCode,
+        errorType: plaidDetail(details, "error_type"),
+        requestId: plaidDetail(details, "request_id"),
+      });
+      throw new ApiError(
+        502,
+        "PLAID_ERROR",
+        "Plaid could not disconnect this bank. Try again.",
+      );
+    }
   }
 
   const disconnectedAt = new Date();
@@ -79,13 +101,15 @@ export async function disconnectPlaidItem(userId: string, itemId: string): Promi
       .update(plaidItems)
       .set({
         status: "disconnected",
+        errorCode: null,
+        errorMessage: null,
         disconnectedAt,
         updatedAt: disconnectedAt,
       })
-      .where(eq(plaidItems.id, itemId));
+      .where(and(eq(plaidItems.id, itemId), eq(plaidItems.userId, userId)));
     await tx
       .update(accounts)
       .set({ archivedAt: disconnectedAt, updatedAt: disconnectedAt })
-      .where(eq(accounts.itemId, itemId));
+      .where(and(eq(accounts.itemId, itemId), eq(accounts.userId, userId)));
   });
 }

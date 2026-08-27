@@ -25,7 +25,9 @@ import {
   DashboardHeader,
   DashboardLoading,
   ErrorBanner,
+  SuccessBanner,
 } from "../components/dashboard/DashboardStates";
+import { DisconnectBankDialog } from "../components/dashboard/DisconnectBankDialog";
 import {
   filterTransactions,
   getBudgetSpent,
@@ -34,12 +36,17 @@ import {
   getCategoryBreakdown,
   getProgressColor,
   getTotalBalance,
-  groupAccountsByInstitution,
+  groupAccountsByItem,
   sentenceCase,
   validateBudgetInput,
 } from "@/lib/dashboard";
 import { getApiErrorMessage, getErrorMessage } from "@/lib/errors";
-import type { DashboardAccount, DashboardError, TransactionsPage } from "@/types/finance";
+import type {
+  ConnectedBankGroup,
+  DashboardAccount,
+  DashboardError,
+  TransactionsPage,
+} from "@/types/finance";
 
 type DashboardTab = "overview" | "cashflow" | "budget";
 
@@ -79,6 +86,12 @@ function Dashboard() {
   const [connecting, setConnecting] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [disconnectTarget, setDisconnectTarget] =
+    useState<ConnectedBankGroup | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [reloadAfterDisconnect, setReloadAfterDisconnect] = useState(false);
 
   // Tab state — initialized from URL ?tab= param
   const initialTab = searchParams.get("tab") || "overview";
@@ -87,7 +100,7 @@ function Dashboard() {
     : "overview";
 
   // Budget state
-  const { budgets, createBudget, deleteBudget } = useBudgets();
+  const { budgets, refreshBudgets, createBudget, deleteBudget } = useBudgets();
   const [showBudgetForm, setShowBudgetForm] = useState(false);
   const [budgetName, setBudgetName] = useState("");
   const [budgetLimit, setBudgetLimit] = useState("");
@@ -97,9 +110,40 @@ function Dashboard() {
     router.replace(`/dashboard?tab=${tab}` as Route, { scroll: false });
   };
 
+  const refreshSavedData = useCallback(async () => {
+    const [accountsRes, transactionsRes] = await Promise.all([
+      fetch("/api/accounts"),
+      fetch("/api/transactions?limit=500"),
+    ]);
+    if (!accountsRes.ok || !transactionsRes.ok) {
+      const failedResponse = !accountsRes.ok ? accountsRes : transactionsRes;
+      throw new Error(
+        getApiErrorMessage(
+          await failedResponse.json().catch(() => null),
+          "We couldn’t load your saved financial data.",
+        ),
+      );
+    }
+    const [accountsData, transactionsData]: [unknown, unknown] = await Promise.all([
+      accountsRes.json(),
+      transactionsRes.json(),
+    ]);
+
+    setAccounts(Array.isArray(accountsData) ? (accountsData as DashboardAccount[]) : []);
+    setTransactions(
+      transactionsData &&
+        typeof transactionsData === "object" &&
+        "data" in transactionsData &&
+        Array.isArray(transactionsData.data)
+        ? (transactionsData as TransactionsPage).data
+        : [],
+    );
+  }, [setTransactions]);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setReloadAfterDisconnect(false);
     try {
       const syncResponse = await fetch("/api/plaid/sync", { method: "POST" });
       let syncWarning: string | null = null;
@@ -121,37 +165,7 @@ function Dashboard() {
             "One or more banks could not refresh. Showing the latest saved data.";
         }
       }
-      const [accountsRes, transactionsRes] = await Promise.all([
-        fetch("/api/accounts"),
-        fetch("/api/transactions?limit=500"),
-      ]);
-      if (!accountsRes.ok || !transactionsRes.ok) {
-        const failedResponse = !accountsRes.ok ? accountsRes : transactionsRes;
-        throw new Error(
-          getApiErrorMessage(
-            await failedResponse.json().catch(() => null),
-            "We couldn’t load your saved financial data.",
-          ),
-        );
-      }
-      const [accountsData, transactionsData]: [unknown, unknown] = await Promise.all([
-        accountsRes.json(),
-        transactionsRes.json(),
-      ]);
-
-      const normalizedAccounts = Array.isArray(accountsData)
-        ? (accountsData as DashboardAccount[])
-        : [];
-      const normalizedTransactions =
-        transactionsData &&
-        typeof transactionsData === "object" &&
-        "data" in transactionsData &&
-        Array.isArray(transactionsData.data)
-          ? (transactionsData as TransactionsPage).data
-          : [];
-
-      setAccounts(normalizedAccounts);
-      setTransactions(normalizedTransactions);
+      await refreshSavedData();
       if (syncWarning) {
         setError({ message: syncWarning, retry: true });
       }
@@ -160,7 +174,7 @@ function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [setTransactions]);
+  }, [refreshSavedData]);
 
   useEffect(() => {
     const initialFetch = window.setTimeout(fetchData, 0);
@@ -240,10 +254,13 @@ function Dashboard() {
     },
   });
 
-  const handleDisconnect = async (itemId: string) => {
+  const handleDisconnect = async () => {
+    if (!disconnectTarget || disconnecting) return;
+    const target = disconnectTarget;
     try {
-      setError(null);
-      const res = await fetch(`/api/plaid/items/${encodeURIComponent(itemId)}`, {
+      setDisconnecting(true);
+      setDisconnectError(null);
+      const res = await fetch(`/api/plaid/items/${encodeURIComponent(target.itemId)}`, {
         method: "DELETE",
       });
       if (!res.ok) {
@@ -254,14 +271,38 @@ function Dashboard() {
           ),
         );
       }
-      await fetchData();
+      const accountIds = new Set(target.accounts.map((account) => account.account_id));
+      setAccounts((current) =>
+        current.filter((account) => account.item_id !== target.itemId),
+      );
+      setTransactions((current) =>
+        current.filter(
+          (transaction) =>
+            !transaction.account_id || !accountIds.has(transaction.account_id),
+        ),
+      );
+      setDisconnectTarget(null);
+      setSuccessMessage(`${target.institutionName} has been disconnected.`);
+
+      try {
+        await Promise.all([refreshSavedData(), refreshBudgets()]);
+      } catch {
+        setReloadAfterDisconnect(true);
+        setError({
+          message:
+            "The bank was disconnected, but the latest saved data could not be loaded. Reload the dashboard to reconcile it.",
+          retry: false,
+        });
+      }
     } catch (err) {
-      setError({ message: getErrorMessage(err), retry: true });
+      setDisconnectError(getErrorMessage(err));
+    } finally {
+      setDisconnecting(false);
     }
   };
 
-  const accountsByInstitution = useMemo(
-    () => groupAccountsByInstitution(accounts),
+  const connectedBanks = useMemo(
+    () => groupAccountsByItem(accounts),
     [accounts],
   );
   const totalBalance = useMemo(() => getTotalBalance(accounts), [accounts]);
@@ -327,17 +368,52 @@ function Dashboard() {
         connecting={connecting}
       />
 
+      <DisconnectBankDialog
+        bank={disconnectTarget}
+        error={disconnectError}
+        pending={disconnecting}
+        onConfirm={() => void handleDisconnect()}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            setDisconnectTarget(null);
+            setDisconnectError(null);
+          }
+        }}
+      />
+
+      {successMessage && (
+        <SuccessBanner
+          message={successMessage}
+          onDismiss={() => setSuccessMessage(null)}
+        />
+      )}
+
       {/* Error */}
       {(error || linkError) && (
         <ErrorBanner
           message={error?.message ?? linkError ?? "Something went wrong."}
           actionLabel={
-            linkError ? "Retry connection" : error?.retry ? "Retry refresh" : undefined
+            linkError
+              ? "Retry connection"
+              : reloadAfterDisconnect
+                ? "Reload dashboard"
+                : error?.retry
+                  ? "Retry refresh"
+                  : undefined
           }
-          onAction={linkError ? createLinkToken : error?.retry ? fetchData : undefined}
+          onAction={
+            linkError
+              ? createLinkToken
+              : reloadAfterDisconnect
+                ? () => window.location.reload()
+                : error?.retry
+                  ? fetchData
+                  : undefined
+          }
           onDismiss={() => {
             setError(null);
             setLinkError(null);
+            setReloadAfterDisconnect(false);
           }}
         />
       )}
@@ -435,10 +511,10 @@ function Dashboard() {
                       Accounts
                     </h2>
                     <div className="space-y-3">
-                      {Object.entries(accountsByInstitution).map(
-                        ([institution, { accounts: accts, item_id }]) => (
+                      {connectedBanks.map(
+                        ({ institutionName, accounts: accts, itemId }) => (
                           <div
-                            key={item_id}
+                            key={itemId}
                             className="rounded-[10px] p-4"
                             style={{
                               backgroundColor: "var(--color-card)",
@@ -447,22 +523,26 @@ function Dashboard() {
                           >
                             <div className="flex justify-between items-center mb-3">
                               <h3 className="text-[14px] font-600">
-                                {institution}
+                                {institutionName}
                               </h3>
                               <button
-                                onClick={() => handleDisconnect(item_id)}
-                                className="text-[11px] font-500 transition-colors"
-                                style={{ color: "var(--color-text-muted)" }}
-                                onMouseEnter={(e) =>
-                                  (e.currentTarget.style.color =
-                                    "var(--color-negative)")
-                                }
-                                onMouseLeave={(e) =>
-                                  (e.currentTarget.style.color =
-                                    "var(--color-text-muted)")
-                                }
+                                type="button"
+                                onClick={() => {
+                                  setDisconnectError(null);
+                                  setDisconnectTarget({
+                                    institutionName,
+                                    accounts: accts,
+                                    itemId,
+                                  });
+                                }}
+                                className="text-[11px] font-600 px-2.5 py-1.5 rounded-md transition-colors"
+                                style={{
+                                  color: "var(--color-text-secondary)",
+                                  border: "1px solid var(--color-border)",
+                                  backgroundColor: "var(--color-card)",
+                                }}
                               >
-                                Disconnect
+                                Manage connection
                               </button>
                             </div>
                             <div className="space-y-2.5">

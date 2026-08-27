@@ -45,17 +45,23 @@ export function mergeTransactions(
   );
 }
 
-export function groupAccountsByInstitution(
+export function groupAccountsByItem(
   accounts: DashboardAccount[],
-): Record<string, InstitutionAccountGroup> {
-  return accounts.reduce<Record<string, InstitutionAccountGroup>>((groups, account) => {
-    const institution = account.institution_name || "Unknown institution";
-    if (!groups[institution]) {
-      groups[institution] = { accounts: [], item_id: account.item_id };
+): ConnectedBankGroup[] {
+  const groups = new Map<string, ConnectedBankGroup>();
+  for (const account of accounts) {
+    const existing = groups.get(account.item_id);
+    if (existing) {
+      existing.accounts.push(account);
+      continue;
     }
-    groups[institution].accounts.push(account);
-    return groups;
-  }, {});
+    groups.set(account.item_id, {
+      accounts: [account],
+      institutionName: account.institution_name || "Unknown institution",
+      itemId: account.item_id,
+    });
+  }
+  return Array.from(groups.values());
 }
 
 export function getTotalBalance(accounts: DashboardAccount[]): number {
@@ -199,5 +205,5 @@ import type {
   CategoryTotal,
   DashboardAccount,
   DashboardTransaction,
-  InstitutionAccountGroup,
+  ConnectedBankGroup,
 } from "@/types/finance";

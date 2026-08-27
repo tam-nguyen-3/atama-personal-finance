@@ -35,9 +35,10 @@ export type Budget = {
 
 export type BudgetUpdates = Partial<Pick<Budget, "name" | "limit">>;
 
-export type InstitutionAccountGroup = {
+export type ConnectedBankGroup = {
   accounts: DashboardAccount[];
-  item_id: string;
+  institutionName: string;
+  itemId: string;
 };
 
 export type CategoryTotal = {

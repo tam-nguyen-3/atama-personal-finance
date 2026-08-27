@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 
 const plaidMocks = vi.hoisted(() => ({ itemRemove: vi.fn() }));
@@ -13,6 +13,7 @@ import {
   budgetTransactions,
   plaidItems,
   transactions,
+  users,
 } from "@/lib/db/schema";
 import {
   assignTransaction,
@@ -25,37 +26,41 @@ import {
   updateBudget,
 } from "@/lib/db/queries";
 import { disconnectPlaidItem } from "@/lib/plaid-items-service";
-import { seedAccount, seedItem, seedTransaction } from "./helpers";
+import { seedAccount, seedItem, seedTransaction, TEST_USER_ID } from "./helpers";
 
 describe("PostgreSQL data access", () => {
-  it("persists the complete budget lifecycle", async () => {
-    const created = await createBudget({ name: "Groceries", limit: 500 });
-    expect(await listBudgets()).toEqual([created]);
+  beforeEach(() => {
+    plaidMocks.itemRemove.mockReset();
+  });
 
-    await updateBudget(created.id, { name: "Food", limit: 650 });
-    expect(await listBudgets()).toMatchObject([
+  it("persists the complete budget lifecycle", async () => {
+    const created = await createBudget(TEST_USER_ID, { name: "Groceries", limit: 500 });
+    expect(await listBudgets(TEST_USER_ID)).toEqual([created]);
+
+    await updateBudget(TEST_USER_ID, created.id, { name: "Food", limit: 650 });
+    expect(await listBudgets(TEST_USER_ID)).toMatchObject([
       { id: created.id, name: "Food", limit: 650 },
     ]);
 
-    await deleteBudget(created.id);
-    expect(await listBudgets()).toEqual([]);
+    await deleteBudget(TEST_USER_ID, created.id);
+    expect(await listBudgets(TEST_USER_ID)).toEqual([]);
   });
 
   it("enforces exclusive transaction assignment and supports unassignment", async () => {
     await seedItem();
     await seedAccount();
     await seedTransaction();
-    const groceries = await createBudget({ name: "Groceries", limit: 500 });
-    const dining = await createBudget({ name: "Dining", limit: 200 });
+    const groceries = await createBudget(TEST_USER_ID, { name: "Groceries", limit: 500 });
+    const dining = await createBudget(TEST_USER_ID, { name: "Dining", limit: 200 });
 
-    const assigned = await assignTransaction(groceries.id, "transaction-1");
+    const assigned = await assignTransaction(TEST_USER_ID, groceries.id, "transaction-1");
     expect(assigned.transactionIds).toEqual(["transaction-1"]);
-    await expect(assignTransaction(dining.id, "transaction-1")).rejects.toMatchObject({
+    await expect(assignTransaction(TEST_USER_ID, dining.id, "transaction-1")).rejects.toMatchObject({
       status: 409,
       code: "CONFLICT",
     });
 
-    const unassigned = await unassignTransaction(groceries.id, "transaction-1");
+    const unassigned = await unassignTransaction(TEST_USER_ID, groceries.id, "transaction-1");
     expect(unassigned.transactionIds).toEqual([]);
   });
 
@@ -63,10 +68,10 @@ describe("PostgreSQL data access", () => {
     await seedItem();
     await seedAccount();
     await seedTransaction();
-    const budget = await createBudget({ name: "Groceries", limit: 500 });
-    await assignTransaction(budget.id, "transaction-1");
+    const budget = await createBudget(TEST_USER_ID, { name: "Groceries", limit: 500 });
+    await assignTransaction(TEST_USER_ID, budget.id, "transaction-1");
 
-    await deleteBudget(budget.id);
+    await deleteBudget(TEST_USER_ID, budget.id);
     expect(await getDb().select().from(budgetTransactions)).toEqual([]);
   });
 
@@ -94,14 +99,14 @@ describe("PostgreSQL data access", () => {
       removedAt: new Date(),
     });
 
-    const firstPage = await listTransactions({ limit: 2 });
+    const firstPage = await listTransactions(TEST_USER_ID, { limit: 2 });
     expect(firstPage.data.map((transaction) => transaction.transaction_id)).toEqual([
       "transaction-c",
       "transaction-b",
     ]);
     expect(firstPage.nextCursor).toEqual(expect.any(String));
 
-    const secondPage = await listTransactions({
+    const secondPage = await listTransactions(TEST_USER_ID, {
       limit: 2,
       cursor: firstPage.nextCursor!,
     });
@@ -110,7 +115,7 @@ describe("PostgreSQL data access", () => {
     ]);
     expect(secondPage.nextCursor).toBeNull();
 
-    const search = await listTransactions({ limit: 10, query: "coffee" });
+    const search = await listTransactions(TEST_USER_ID, { limit: 10, query: "coffee" });
     expect(search.data.map((transaction) => transaction.transaction_id)).toEqual([
       "transaction-c",
     ]);
@@ -129,7 +134,7 @@ describe("PostgreSQL data access", () => {
       archivedAt: new Date(),
     });
 
-    expect((await listAccounts()).map((account) => account.account_id).sort()).toEqual([
+    expect((await listAccounts(TEST_USER_ID)).map((account) => account.account_id).sort()).toEqual([
       "active-account",
       "error-account",
     ]);
@@ -140,13 +145,14 @@ describe("PostgreSQL data access", () => {
     await seedItem();
     await seedAccount();
     await seedTransaction();
-    const budget = await createBudget({ name: "Groceries", limit: 500 });
-    await assignTransaction(budget.id, "transaction-1");
+    const budget = await createBudget(TEST_USER_ID, { name: "Groceries", limit: 500 });
+    await assignTransaction(TEST_USER_ID, budget.id, "transaction-1");
 
-    await disconnectPlaidItem("item-1");
+    await disconnectPlaidItem(TEST_USER_ID, "item-1");
 
     expect(plaidMocks.itemRemove).toHaveBeenCalledWith({
       access_token: "access-token",
+      reason_code: "OTHER",
     });
     const [item] = await getDb()
       .select()
@@ -159,6 +165,74 @@ describe("PostgreSQL data access", () => {
     expect(item?.status).toBe("disconnected");
     expect(account?.archivedAt).toBeInstanceOf(Date);
     expect(await getDb().select().from(transactions)).toHaveLength(1);
-    expect((await listBudgets())[0]?.transactionIds).toEqual(["transaction-1"]);
+    expect(await listAccounts(TEST_USER_ID)).toEqual([]);
+    expect((await listTransactions(TEST_USER_ID, { limit: 10 })).data).toEqual([]);
+    expect((await listBudgets(TEST_USER_ID))[0]?.transactionIds).toEqual([]);
+    expect(await getDb().select().from(budgetTransactions)).toHaveLength(1);
+  });
+
+  it("keeps an Item connected when Plaid removal fails", async () => {
+    plaidMocks.itemRemove.mockRejectedValue({
+      response: { data: { error_code: "INTERNAL_SERVER_ERROR" } },
+    });
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    await seedItem();
+    await seedAccount();
+
+    await expect(
+      disconnectPlaidItem(TEST_USER_ID, "item-1"),
+    ).rejects.toMatchObject({ status: 502, code: "PLAID_ERROR" });
+
+    const [item] = await getDb().select().from(plaidItems);
+    const [account] = await getDb().select().from(accounts);
+    expect(item?.status).toBe("active");
+    expect(account?.archivedAt).toBeNull();
+    consoleError.mockRestore();
+  });
+
+  it("reconciles an Item Plaid already removed and allows repeat disconnects", async () => {
+    plaidMocks.itemRemove.mockRejectedValueOnce({
+      response: { data: { error_code: "ITEM_NOT_FOUND" } },
+    });
+    await seedItem();
+    await seedAccount();
+
+    await disconnectPlaidItem(TEST_USER_ID, "item-1");
+    await disconnectPlaidItem(TEST_USER_ID, "item-1");
+
+    expect(plaidMocks.itemRemove).toHaveBeenCalledTimes(1);
+    const [item] = await getDb().select().from(plaidItems);
+    expect(item?.status).toBe("disconnected");
+  });
+
+  it("does not disconnect another user's Item", async () => {
+    const otherUserId = "00000000-0000-4000-8000-000000000002";
+    await getDb().insert(users).values({
+      id: otherUserId,
+      displayName: "Other User",
+      email: "other@example.com",
+    });
+    await seedItem();
+
+    await expect(
+      disconnectPlaidItem(otherUserId, "item-1"),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
+    expect(plaidMocks.itemRemove).not.toHaveBeenCalled();
+  });
+
+  it("rejects budget assignment for a disconnected Item's transaction", async () => {
+    await seedItem({ status: "disconnected" });
+    await seedAccount({ archivedAt: new Date() });
+    await seedTransaction();
+    const budget = await createBudget(TEST_USER_ID, {
+      name: "Groceries",
+      limit: 500,
+    });
+
+    await expect(
+      assignTransaction(TEST_USER_ID, budget.id, "transaction-1"),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 });

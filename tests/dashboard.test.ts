@@ -5,10 +5,11 @@ import {
   getCashFlowData,
   getCashFlowTotals,
   getCategoryBreakdown,
+  groupAccountsByItem,
   mergeTransactions,
   validateBudgetInput,
 } from "@/lib/dashboard";
-import type { Budget, DashboardTransaction } from "@/types/finance";
+import type { Budget, DashboardAccount, DashboardTransaction } from "@/types/finance";
 
 const transactions: DashboardTransaction[] = [
   {
@@ -41,6 +42,37 @@ const transactions: DashboardTransaction[] = [
 ];
 
 describe("dashboard calculations", () => {
+  it("groups repeated institutions by Plaid Item instead of display name", () => {
+    const account = (accountId: string, itemId: string): DashboardAccount => ({
+      account_id: accountId,
+      item_id: itemId,
+      institution_name: "Tartan Bank",
+      name: accountId,
+      type: "depository",
+      subtype: "checking",
+      balances: { current: 100 },
+    });
+
+    expect(
+      groupAccountsByItem([
+        account("checking-1", "item-1"),
+        account("savings-1", "item-1"),
+        account("checking-2", "item-2"),
+      ]),
+    ).toEqual([
+      {
+        itemId: "item-1",
+        institutionName: "Tartan Bank",
+        accounts: [account("checking-1", "item-1"), account("savings-1", "item-1")],
+      },
+      {
+        itemId: "item-2",
+        institutionName: "Tartan Bank",
+        accounts: [account("checking-2", "item-2")],
+      },
+    ]);
+  });
+
   it("merges, deduplicates, filters institutions, and sorts newest first", () => {
     const updatedExpense = { ...transactions[0]!, amount: 45 };
     const result = mergeTransactions(
